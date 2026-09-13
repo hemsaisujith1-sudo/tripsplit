@@ -4,11 +4,42 @@ const cors = require('cors');
 const path = require('path');
 const connectDB = require('./config/db');
 
-let dbConnected = false;
-async function ensureDB() {
-  if (dbConnected) return;
-  await connectDB();
-  dbConnected = true;
+let dbState = 'idle';
+let dbConnectPromise = null;
+let lastError = null;
+const FAIL_COOLDOWN_MS = 15000;
+let lastFailAt = 0;
+
+async function ensureDB(options = {}) {
+  const { exitOnError = false } = options;
+  const now = Date.now();
+
+  if (dbState === 'connected') return;
+
+  if (dbState === 'failed' && (now - lastFailAt) < FAIL_COOLDOWN_MS) {
+    throw lastError || new Error('Database connection recently failed; try again shortly.');
+  }
+
+  if (dbState === 'connecting' && dbConnectPromise) {
+    return dbConnectPromise;
+  }
+
+  dbState = 'connecting';
+  dbConnectPromise = (async () => {
+    try {
+      await connectDB({ exitOnError });
+      dbState = 'connected';
+      lastError = null;
+    } catch (err) {
+      dbState = 'failed';
+      lastFailAt = Date.now();
+      lastError = err;
+      dbConnectPromise = null;
+      throw err;
+    }
+  })();
+
+  return dbConnectPromise;
 }
 
 const app = express();
@@ -72,7 +103,7 @@ if (require.main === module) {
     try {
       console.log('\n🚀 TripSplit v2 — starting up...');
       console.log('   Mode: Full-stack (Express + MongoDB + static frontend)');
-      await ensureDB();
+      await ensureDB({ exitOnError: true });
       app.listen(PORT, () => {
         console.log(`\n✅ Server ready → http://localhost:${PORT}`);
         console.log(`   API base    → http://localhost:${PORT}/api/trips`);

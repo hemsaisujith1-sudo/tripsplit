@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const connectDB = require('./config/db');
+const authRoutes = require('./routes/auth');
 
 let dbState = 'idle';
 let dbConnectPromise = null;
@@ -62,6 +63,8 @@ app.use('/api', async (req, res, next) => {
     res.status(503).json({ error: 'Database connection failed', detail: err.message });
   }
 });
+
+app.use('/api/auth', authRoutes.router);
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));

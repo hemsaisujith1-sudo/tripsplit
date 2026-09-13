@@ -5,6 +5,7 @@
 const STORAGE_KEY_ONGOING = 'tripsplit_ongoing_trips';
 const STORAGE_KEY_PAST = 'tripsplit_past_trips';
 const STORAGE_KEY_DRAFT = 'tripsplit_new_trip_draft';
+const STORAGE_KEY_AUTH = 'tripsplit_auth';
 const API_BASE = '/api/trips';
 
 let BACKEND_ONLINE = null;
@@ -76,6 +77,29 @@ function buildQuery(obj) {
 
 function navigate(path, queryObj) {
     window.location.assign(path + buildQuery(queryObj || {}));
+}
+
+function getAuth() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_AUTH) || 'null'); } catch (e) { return null; }
+}
+
+function saveAuth(data) {
+    localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(data));
+}
+
+function clearAuth() {
+    localStorage.removeItem(STORAGE_KEY_AUTH);
+}
+
+async function authRequest(path, body) {
+    const res = await fetch('/api/auth' + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Authentication failed');
+    return data;
 }
 
 /* =========================================================
@@ -166,6 +190,8 @@ async function api(method, path, body) {
         method,
         headers: { 'Content-Type': 'application/json' }
     };
+    const auth = getAuth();
+    if (auth && auth.token) opts.headers.Authorization = `Bearer ${auth.token}`;
     if (body !== undefined) opts.body = JSON.stringify(body);
 
     try {
@@ -280,6 +306,7 @@ function renderNav(activeKey) {
     `;
     const ongoingCount = ongoingTripsData.length;
     const pastCount = pastTripsData.length;
+    const auth = getAuth();
     header.innerHTML = `
         <nav class="global-nav">
             <div class="nav-container">
@@ -288,6 +315,7 @@ function renderNav(activeKey) {
                     ${linkOf('home', 'home.html', 'Home')}
                     ${linkOf('ongoing', 'ongoing.html', 'Ongoing', ongoingCount > 0, ongoingCount)}
                     ${linkOf('past', 'past.html', 'Past', pastCount > 0, pastCount)}
+                    <a class="nav-account" href="${auth ? 'account.html' : 'login.html'}">${auth ? escapeHTML(auth.user.name) : 'Log in'}</a>
                     <a class="primary-btn nav-cta" href="new-trip.html" style="padding: 10px 18px; font-size: 14px;">
                         + New Trip
                     </a>
@@ -302,6 +330,46 @@ function renderNav(activeKey) {
         offline.innerHTML = '⚠️ Running offline — changes saved locally only. Will sync when MongoDB becomes available.';
         header.appendChild(offline);
     }
+}
+
+function initAuthForm(type) {
+    const form = document.getElementById(`${type}-form`);
+    if (!form) return;
+    if (getAuth()) {
+        window.location.replace('account.html');
+        return;
+    }
+    const error = document.getElementById('auth-error');
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        error.hidden = true;
+        try {
+            const fields = Object.fromEntries(new FormData(form).entries());
+            const result = await authRequest(type === 'signup' ? '/signup' : '/login', fields);
+            saveAuth(result);
+            window.location.assign('home.html');
+        } catch (err) {
+            error.textContent = err.message;
+            error.hidden = false;
+            button.disabled = false;
+        }
+    });
+}
+
+function initAccountPage() {
+    const auth = getAuth();
+    if (!auth) {
+        window.location.replace('login.html');
+        return;
+    }
+    document.getElementById('account-name').textContent = auth.user.name;
+    document.getElementById('account-email').textContent = auth.user.email;
+    document.getElementById('logout-button').addEventListener('click', () => {
+        clearAuth();
+        window.location.assign('index.html');
+    });
 }
 
 function renderBreadcrumb(segments) {
@@ -1499,6 +1567,16 @@ function detectPageId() {
 }
 
 async function initPage() {
+    const pageId = detectPageId();
+    if (pageId === 'signup' || pageId === 'login') {
+        initAuthForm(pageId);
+        return;
+    }
+    if (pageId === 'account') {
+        initAccountPage();
+        renderNav(null);
+        return;
+    }
     await fullLoad();
     api('GET', '/health').then((r) => {
         if (r && r.status === 'ok') {
@@ -1514,7 +1592,6 @@ async function initPage() {
         BACKEND_ONLINE = false;
     });
 
-    const pageId = detectPageId();
     if (!pageId) return;
 
     switch (pageId) {

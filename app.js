@@ -233,7 +233,15 @@ async function fullLoad() {
 }
 
 function mergeRemoteTrips(remoteTrips, localTrips) {
-    const merged = remoteTrips.map(enrichWithLocalIds);
+    const localById = new Map(localTrips
+        .filter((trip) => trip._id)
+        .map((trip) => [String(trip._id), trip]));
+    const merged = remoteTrips.map((remoteTrip) => {
+        const matchingLocal = localById.get(String(remoteTrip._id));
+        const trip = enrichWithLocalIds(remoteTrip);
+        if (matchingLocal && matchingLocal.localId) trip.localId = matchingLocal.localId;
+        return trip;
+    });
     const knownKeys = new Set(merged.flatMap((trip) => [String(trip._id || ''), String(trip.localId || '')]));
     localTrips.forEach((trip) => {
         const keys = [String(trip._id || ''), String(trip.localId || '')];

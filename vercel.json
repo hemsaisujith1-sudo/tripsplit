@@ -1,38 +1,9 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "server.js",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "index.html",
-          "styles.css",
-          "app.js",
-          "package.json",
-          "models/**",
-          "routes/**",
-          "config/**",
-          "controllers/**"
-        ]
-      }
-    },
-    {
-      "src": "index.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "styles.css",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "app.js",
-      "use": "@vercel/static"
-    }
-  ],
   "installCommand": "npm install",
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/server.js" },
-    { "src": "/(.*)", "dest": "/server.js" }
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index.js" },
+    { "source": "/:path*", "destination": "/index.html" }
   ]
 }

@@ -4,6 +4,13 @@ const cors = require('cors');
 const path = require('path');
 const connectDB = require('./config/db');
 
+let dbConnected = false;
+async function ensureDB() {
+  if (dbConnected) return;
+  await connectDB();
+  dbConnected = true;
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -13,6 +20,15 @@ app.use(cors({
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use(async (req, res, next) => {
+  try {
+    await ensureDB();
+    next();
+  } catch (err) {
+    res.status(503).json({ error: 'Database connection failed', detail: err.message });
+  }
+});
 
 app.use(express.static(__dirname));
 
@@ -33,15 +49,22 @@ app.use((err, req, res, next) => {
   });
 });
 
-const start = async () => {
-  console.log('\n🚀 TripSplit v2 — starting up...');
-  console.log('   Mode: Full-stack (Express + MongoDB + static frontend)');
-  await connectDB();
-  app.listen(PORT, () => {
-    console.log(`\n✅ Server ready → http://localhost:${PORT}`);
-    console.log(`   API base    → http://localhost:${PORT}/api/trips`);
-    console.log(`   Healthcheck → http://localhost:${PORT}/api/trips/health\n`);
-  });
-};
+module.exports = { app, ensureDB };
 
-start();
+if (require.main === module) {
+  (async () => {
+    try {
+      console.log('\n🚀 TripSplit v2 — starting up...');
+      console.log('   Mode: Full-stack (Express + MongoDB + static frontend)');
+      await ensureDB();
+      app.listen(PORT, () => {
+        console.log(`\n✅ Server ready → http://localhost:${PORT}`);
+        console.log(`   API base    → http://localhost:${PORT}/api/trips`);
+        console.log(`   Healthcheck → http://localhost:${PORT}/api/trips/health\n`);
+      });
+    } catch (e) {
+      console.error('Failed to start server:', e);
+      process.exit(1);
+    }
+  })();
+}

@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Trip = require('../models/Trip');
 
 const buildSummary = (trip) => {

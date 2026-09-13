@@ -4,6 +4,7 @@
 
 const STORAGE_KEY_ONGOING = 'tripsplit_ongoing_trips';
 const STORAGE_KEY_PAST = 'tripsplit_past_trips';
+const STORAGE_KEY_DRAFT = 'tripsplit_new_trip_draft';
 const API_BASE = '/api/trips';
 
 let BACKEND_ONLINE = null;
@@ -21,7 +22,9 @@ const CURRENCIES = [
 ];
 
 /* =========================================================
-   GLOBAL STATE
+   GLOBAL STATE (rehydrated on every page load from
+   localStorage + URL query params; never survives across
+   page reloads as the source of truth)
 ========================================================= */
 
 let memberCount = 4;
@@ -29,21 +32,128 @@ let ongoingTripsData = [];
 let pastTripsData = [];
 let currentTripIndex = null;
 let currentMemberIndex = null;
-let editingTripIndex = null;
 let viewingPastTripIndex = null;
+let editingTripIndex = null;
 let editingExpenseIndex = null;
 let customSplitMode = false;
 let selectedSplitMemberIndices = [];
 let syncTimeout = null;
 
-let tripData = {
-    destination: "",
-    startDate: "",
-    endDate: "",
-    currency: "INR",
-    memberCount: 4,
-    members: []
+/* =========================================================
+   PAGE META
+========================================================= */
+
+const PAGES = {
+    landing:      { id: 'landing',      navActive: null,     name: 'TripSplit' },
+    home:         { id: 'home',         navActive: 'home',   name: 'Home' },
+    newTrip:      { id: 'newTrip',      navActive: 'home',   name: 'New Trip' },
+    memberNames:  { id: 'memberNames',  navActive: 'home',   name: 'Trip Members' },
+    dashboard:    { id: 'dashboard',    navActive: 'ongoing',name: 'Trip Dashboard' },
+    ongoing:      { id: 'ongoing',      navActive: 'ongoing',name: 'Ongoing Trips' },
+    past:         { id: 'past',         navActive: 'past',   name: 'Past Trips' },
+    tripMembers:  { id: 'tripMembers',  navActive: 'ongoing',name: 'Trip Members' },
+    expense:      { id: 'expense',      navActive: 'ongoing',name: 'Add Expense' },
+    summary:      { id: 'summary',      navActive: 'ongoing',name: 'Trip Summary' },
+    notFound:     { id: 'notFound',     navActive: null,     name: '404' }
 };
+
+/* =========================================================
+   QUERY STRING HELPERS
+========================================================= */
+
+function getQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const out = {};
+    for (const [k, v] of params.entries()) out[k] = v;
+    return out;
+}
+
+function buildQuery(obj) {
+    const entries = Object.entries(obj).filter(([, v]) => v !== undefined && v !== null && v !== '');
+    if (entries.length === 0) return '';
+    return '?' + new URLSearchParams(entries).toString();
+}
+
+function navigate(path, queryObj) {
+    window.location.assign(path + buildQuery(queryObj || {}));
+}
+
+/* =========================================================
+   DRAFT TRIP (used between new-trip.html → member-names.html)
+========================================================= */
+
+function saveDraftTrip(t) {
+    localStorage.setItem(STORAGE_KEY_DRAFT, JSON.stringify(t));
+}
+function loadDraftTrip() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY_DRAFT);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+function clearDraftTrip() {
+    localStorage.removeItem(STORAGE_KEY_DRAFT);
+}
+
+/* =========================================================
+   LOCAL STORAGE (arrays)
+========================================================= */
+
+function loadFromStorage() {
+    try {
+        const ongoing = localStorage.getItem(STORAGE_KEY_ONGOING);
+        const past = localStorage.getItem(STORAGE_KEY_PAST);
+        if (ongoing) ongoingTripsData = JSON.parse(ongoing);
+        if (past) pastTripsData = JSON.parse(past);
+    } catch (e) {
+        console.warn('Failed to load from storage', e);
+        ongoingTripsData = [];
+        pastTripsData = [];
+    }
+}
+
+function saveToStorage() {
+    try {
+        localStorage.setItem(STORAGE_KEY_ONGOING, JSON.stringify(ongoingTripsData));
+        localStorage.setItem(STORAGE_KEY_PAST, JSON.stringify(pastTripsData));
+    } catch (e) {
+        console.warn('Failed to save to storage', e);
+    }
+}
+
+/* =========================================================
+   TRIP LOCAL ID LOOKUP
+========================================================= */
+
+function ensureLocalIds() {
+    for (const arr of [ongoingTripsData, pastTripsData]) {
+        for (const trip of arr) {
+            if (!trip.localId) {
+                trip.localId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : 'trip-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+            }
+            (trip.members || []).forEach(m => {
+                if (!Array.isArray(m.expenses)) m.expenses = [];
+            });
+        }
+    }
+    saveToStorage();
+}
+
+function findTripByLocalId(localId) {
+    for (let i = 0; i < ongoingTripsData.length; i++) {
+        if (ongoingTripsData[i].localId === localId) {
+            return { trip: ongoingTripsData[i], array: ongoingTripsData, index: i, isPast: false };
+        }
+    }
+    for (let i = 0; i < pastTripsData.length; i++) {
+        if (pastTripsData[i].localId === localId) {
+            return { trip: pastTripsData[i], array: pastTripsData, index: i, isPast: true };
+        }
+    }
+    return null;
+}
 
 /* =========================================================
    API HELPERS (graceful offline fallback)
@@ -75,32 +185,6 @@ async function api(method, path, body) {
 }
 
 /* =========================================================
-   LOCAL STORAGE
-========================================================= */
-
-function loadFromStorage() {
-    try {
-        const ongoing = localStorage.getItem(STORAGE_KEY_ONGOING);
-        const past = localStorage.getItem(STORAGE_KEY_PAST);
-        if (ongoing) ongoingTripsData = JSON.parse(ongoing);
-        if (past) pastTripsData = JSON.parse(past);
-    } catch (e) {
-        console.warn('Failed to load from storage', e);
-        ongoingTripsData = [];
-        pastTripsData = [];
-    }
-}
-
-function saveToStorage() {
-    try {
-        localStorage.setItem(STORAGE_KEY_ONGOING, JSON.stringify(ongoingTripsData));
-        localStorage.setItem(STORAGE_KEY_PAST, JSON.stringify(pastTripsData));
-    } catch (e) {
-        console.warn('Failed to save to storage', e);
-    }
-}
-
-/* =========================================================
    FULL LOAD: API FIRST, FALLBACK TO STORAGE
 ========================================================= */
 
@@ -112,28 +196,18 @@ async function fullLoad() {
         api('GET', '/past')
     ]);
 
-    if (ongoing && Array.isArray(ongoing)) {
-        ongoingTripsData = ongoing.map(enrichWithLocalIds);
-    }
-    if (past && Array.isArray(past)) {
-        pastTripsData = past.map(enrichWithLocalIds);
-    }
+    if (ongoing && Array.isArray(ongoing)) ongoingTripsData = ongoing.map(enrichWithLocalIds);
+    if (past && Array.isArray(past)) pastTripsData = past.map(enrichWithLocalIds);
 
+    ensureLocalIds();
     saveToStorage();
-    fixRefsAfterReload();
 }
 
 function enrichWithLocalIds(t) {
-    t.members.forEach((m) => {
+    (t.members || []).forEach((m) => {
         if (!Array.isArray(m.expenses)) m.expenses = [];
     });
     return t;
-}
-
-function fixRefsAfterReload() {
-    if (currentTripIndex !== null && ongoingTripsData.length === 0) {
-        currentTripIndex = null;
-    }
 }
 
 /* =========================================================
@@ -141,29 +215,25 @@ function fixRefsAfterReload() {
 ========================================================= */
 
 function persistAll() {
+    ensureLocalIds();
     saveToStorage();
     clearTimeout(syncTimeout);
     syncTimeout = setTimeout(() => {
-        try {
-            syncTripsToBackend().catch(() => {});
-        } catch (e) {}
+        try { syncTripsToBackend().catch(() => {}); } catch (e) {}
     }, SYNC_DEBOUNCE_MS);
 }
 
 async function syncTripsToBackend() {
     if (BACKEND_ONLINE === false) return;
-
     try {
         const [remoteOngoing, remotePast] = await Promise.all([
             api('GET', '/ongoing'),
             api('GET', '/past')
         ]);
-
         const remoteIds = new Set([
             ...(remoteOngoing || []).map((t) => String(t._id)),
             ...(remotePast || []).map((t) => String(t._id))
         ]);
-
         for (const trip of ongoingTripsData) {
             if (!trip._id) {
                 const created = await api('POST', '/', stripInternal(trip));
@@ -187,6 +257,7 @@ function stripInternal(t) {
     delete copy.__v;
     delete copy.createdAt;
     delete copy.updatedAt;
+    delete copy.localId;
     if (copy.isCompleted) {
         delete copy.isCompleted;
         delete copy.completedDate;
@@ -195,19 +266,199 @@ function stripInternal(t) {
 }
 
 /* =========================================================
-   PAGE CONTROL
+   SHARED CHROME: NAV + BREADCRUMB + TOAST ROOT
 ========================================================= */
 
-function showPage(pageId) {
-    document.querySelectorAll(".page").forEach(page => {
-        page.classList.remove("active");
-    });
-
-    const page = document.getElementById(pageId);
-    if (page) {
-        page.classList.add("active");
-        window.scrollTo({ top: 0, behavior: "instant" });
+function renderNav(activeKey) {
+    const header = document.getElementById('global-header');
+    if (!header) return;
+    const linkOf = (key, href, label, hasBadge, badgeCount) => `
+        <a class="nav-item ${activeKey === key ? 'nav-active' : ''}" href="${href}">
+            <span>${label}</span>
+            ${hasBadge ? `<span class="count-badge">${badgeCount ?? 0}</span>` : ''}
+        </a>
+    `;
+    const ongoingCount = ongoingTripsData.length;
+    const pastCount = pastTripsData.length;
+    header.innerHTML = `
+        <nav class="global-nav">
+            <div class="nav-container">
+                <a class="nav-logo" href="home.html">TripSplit</a>
+                <div class="nav-items">
+                    ${linkOf('home', 'home.html', 'Home')}
+                    ${linkOf('ongoing', 'ongoing.html', 'Ongoing', ongoingCount > 0, ongoingCount)}
+                    ${linkOf('past', 'past.html', 'Past', pastCount > 0, pastCount)}
+                    <a class="primary-btn nav-cta" href="new-trip.html" style="padding: 10px 18px; font-size: 14px;">
+                        + New Trip
+                    </a>
+                </div>
+            </div>
+        </nav>
+        <div class="global-nav-spacer"></div>
+    `;
+    if (!BACKEND_ONLINE) {
+        const offline = document.createElement('div');
+        offline.style.cssText = 'text-align:center;background:rgba(234,179,8,0.12);color:#facc15;padding:8px 16px;font-size:13px;border-bottom:1px solid rgba(234,179,8,0.25);';
+        offline.innerHTML = '⚠️ Running offline — changes saved locally only. Will sync when MongoDB becomes available.';
+        header.appendChild(offline);
     }
+}
+
+function renderBreadcrumb(segments) {
+    const slot = document.getElementById('breadcrumb-slot');
+    if (!slot) return;
+    if (!segments || segments.length === 0) { slot.innerHTML = ''; return; }
+    slot.innerHTML = `
+        <div class="breadcrumb">
+            ${segments.map((seg, i) => {
+                const last = i === segments.length - 1;
+                const cls = last ? 'breadcrumb-item breadcrumb-current' : 'breadcrumb-item';
+                const inner = last
+                    ? escapeHTML(seg.label)
+                    : `<a href="${seg.href}">${escapeHTML(seg.label)}</a>`;
+                const sep = !last ? `<span class="breadcrumb-sep">›</span>` : '';
+                return `<div class="${cls}">${inner}</div>${sep}`;
+            }).join('')}
+        </div>
+    `;
+}
+
+function injectToastRoot() {
+    if (!document.getElementById('toast-root')) {
+        const root = document.createElement('div');
+        root.id = 'toast-root';
+        root.className = 'toast-root';
+        document.body.appendChild(root);
+    }
+}
+
+function injectSharedChrome(pageId, segments, navActiveOverride) {
+    const meta = PAGES[pageId] || PAGES.notFound;
+    const activeKey = (navActiveOverride !== undefined && navActiveOverride !== null)
+        ? navActiveOverride
+        : meta.navActive;
+    if (activeKey !== null) {
+        renderNav(activeKey);
+    }
+    renderBreadcrumb(segments || []);
+    injectToastRoot();
+}
+
+/* =========================================================
+   TOAST NOTIFICATIONS
+========================================================= */
+
+function showToast(message, type = 'info', durationMs = 3000) {
+    injectToastRoot();
+    const root = document.getElementById('toast-root');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+    toast.innerHTML = `<div style="display:flex;gap:10px;align-items:flex-start;"><span style="font-size:16px;">${icon}</span><div style="flex:1;">${escapeHTML(message)}</div></div>`;
+    root.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(40px)';
+        toast.style.transition = 'opacity .25s ease, transform .25s ease';
+    }, durationMs - 250);
+    setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, durationMs);
+}
+
+/* =========================================================
+   INLINE MESSAGE (FORM BANNERS)
+========================================================= */
+
+function showMessage(containerId, text, type = 'error') {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.className = `message form-${type === 'success' ? 'success' : 'error'}-banner`;
+    el.textContent = text;
+    el.style.display = 'block';
+}
+
+function hideMessage(containerId) {
+    const el = document.getElementById(containerId);
+    if (el) { el.style.display = 'none'; el.textContent = ''; el.className = ''; }
+}
+
+function showError(elementId, message) { showMessage(elementId, message, 'error'); }
+function showSuccess(elementId, message) { showMessage(elementId, message, 'success'); }
+
+/* =========================================================
+   CONFETTI
+========================================================= */
+
+function triggerConfetti(count = 80, colors = ['#6366f1','#06b6d4','#f472b6','#fbbf24','#34d399','#f87171']) {
+    const layer = document.createElement('div');
+    layer.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none;z-index:200;';
+    document.body.appendChild(layer);
+    for (let i = 0; i < count; i++) {
+        const p = document.createElement('span');
+        p.className = 'confetti-piece';
+        const left = Math.random() * 100;
+        const delay = Math.random() * 0.3;
+        const color = colors[i % colors.length];
+        p.style.cssText = `
+            left: ${left}vw;
+            top: -10px;
+            background: ${color};
+            animation-delay: ${delay}s;
+            border-radius: ${i % 2 === 0 ? '2px' : '50%'};
+            width: ${6 + Math.random() * 6}px;
+            height: ${6 + Math.random() * 8}px;
+        `;
+        layer.appendChild(p);
+    }
+    setTimeout(() => {
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
+    }, 2200);
+}
+
+/* =========================================================
+   STATE BOOTSTRAP — runs on every page DOMContentLoaded after
+   fullLoad, hydrates currentTripIndex / currentMemberIndex
+   etc. from ?tripId / ?memberIdx / ?past query params.
+========================================================= */
+
+function bootstrapStateFromQuery() {
+    const q = getQuery();
+    currentTripIndex = null;
+    currentMemberIndex = null;
+    viewingPastTripIndex = null;
+    if (q.tripId) {
+        const f = findTripByLocalId(q.tripId);
+        if (f) {
+            if (f.isPast) {
+                viewingPastTripIndex = f.index;
+            } else {
+                currentTripIndex = f.index;
+            }
+        }
+    }
+    if (q.memberIdx !== undefined && q.memberIdx !== null && q.memberIdx !== '') {
+        const idx = parseInt(q.memberIdx, 10);
+        if (!Number.isNaN(idx) && idx >= 0) currentMemberIndex = idx;
+    }
+    if (q.past === '1' && viewingPastTripIndex === null && q.tripId) {
+        // tripId might be in ongoing but user wants past-view; leave null if not found
+    }
+}
+
+function currentTripCtx() {
+    if (viewingPastTripIndex !== null && pastTripsData[viewingPastTripIndex]) {
+        return { trip: pastTripsData[viewingPastTripIndex], isPast: true, refArray: pastTripsData, refIndex: viewingPastTripIndex };
+    }
+    if (currentTripIndex !== null && ongoingTripsData[currentTripIndex]) {
+        return { trip: ongoingTripsData[currentTripIndex], isPast: false, refArray: ongoingTripsData, refIndex: currentTripIndex };
+    }
+    return null;
+}
+
+function currentLocalIdOfTrip() {
+    const ctx = currentTripCtx();
+    return ctx ? ctx.trip.localId : null;
 }
 
 /* =========================================================
@@ -220,13 +471,9 @@ function getCurrencySymbol(code) {
 }
 
 function resolveCurrencyCtx() {
-    if (viewingPastTripIndex !== null && pastTripsData[viewingPastTripIndex]) {
-        return pastTripsData[viewingPastTripIndex].currency || 'INR';
-    }
-    if (currentTripIndex !== null && ongoingTripsData[currentTripIndex]) {
-        return ongoingTripsData[currentTripIndex].currency || 'INR';
-    }
-    return tripData.currency || 'INR';
+    const ctx = currentTripCtx();
+    if (ctx) return ctx.trip.currency || 'INR';
+    return 'INR';
 }
 
 function formatMoney(amount, currencyOverride) {
@@ -247,79 +494,80 @@ function renderCurrencySelect(selectedCode, containerId) {
 }
 
 /* =========================================================
-   HOME / MENU
-========================================================= */
-
-function showMenu() {
-    editingTripIndex = null;
-    viewingPastTripIndex = null;
-    showPage("menuPage");
-}
-
-function goHome() {
-    editingTripIndex = null;
-    viewingPastTripIndex = null;
-    showPage("menuPage");
-}
-
-function backToMenu() {
-    editingTripIndex = null;
-    showPage("menuPage");
-}
-
-/* =========================================================
-   NEW TRIP
-========================================================= */
-
-function showNewTrip() {
-    editingTripIndex = null;
-    viewingPastTripIndex = null;
-    resetNewTripForm();
-    showPage("newTripPage");
-}
-
-function backToNewTrip() {
-    showPage("newTripPage");
-}
-
-function resetNewTripForm() {
-    document.getElementById("destination").value = "";
-    document.getElementById("startDate").value = "";
-    document.getElementById("endDate").value = "";
-    memberCount = 4;
-    document.getElementById("memberCount").textContent = memberCount;
-    renderCurrencySelect('INR', 'currencySelect');
-    hideMessage("newTripError");
-}
-
-/* =========================================================
-   MEMBER COUNT
-========================================================= */
-
-function changeMembers(change) {
-    memberCount += change;
-    if (memberCount < 2) memberCount = 2;
-    if (memberCount > 20) memberCount = 20;
-    document.getElementById("memberCount").textContent = memberCount;
-}
-
-/* =========================================================
    DATE PICKER
 ========================================================= */
 
 function openDatePicker(inputId) {
     const input = document.getElementById(inputId);
-    if (input.showPicker) {
+    if (input && input.showPicker) {
         try { input.showPicker(); }
         catch (error) { input.focus(); }
-    } else {
+    } else if (input) {
         input.focus();
     }
 }
 
 /* =========================================================
-   CREATE / EDIT TRIP (local + sync)
+   PAGE: home.html (MENU)
 ========================================================= */
+
+function pageHomeInit() {
+    injectSharedChrome('home', [{ label: 'Home', href: 'home.html', current: true }]);
+    const ogEl = document.getElementById('count-ongoing');
+    const psEl = document.getElementById('count-past');
+    if (ogEl) ogEl.textContent = ongoingTripsData.length;
+    if (psEl) psEl.textContent = pastTripsData.length;
+}
+
+/* =========================================================
+   PAGE: new-trip.html (CREATE / EDIT)
+========================================================= */
+
+function pageNewTripInit() {
+    injectSharedChrome('newTrip', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'New Trip', current: true }
+    ]);
+
+    const q = getQuery();
+    let prefill = null;
+    if (q.tripId) {
+        const f = findTripByLocalId(q.tripId);
+        if (f && !f.isPast) {
+            prefill = f.trip;
+            editingTripIndex = f.index;
+        }
+    }
+    if (!prefill) prefill = loadDraftTrip();
+
+    if (prefill) {
+        const destEl = document.getElementById('destination');
+        const startEl = document.getElementById('startDate');
+        const endEl = document.getElementById('endDate');
+        if (destEl && prefill.destination) destEl.value = prefill.destination;
+        if (startEl && prefill.startDate) startEl.value = prefill.startDate;
+        if (endEl && prefill.endDate) endEl.value = prefill.endDate;
+        memberCount = Number(prefill.memberCount) || 4;
+        if (memberCount < 2) memberCount = 2;
+        renderCurrencySelect(prefill.currency || 'INR', 'currencySelect');
+    } else {
+        memberCount = 4;
+        renderCurrencySelect('INR', 'currencySelect');
+    }
+    const cntEl = document.getElementById('memberCount');
+    if (cntEl) cntEl.textContent = memberCount;
+
+    const pageH = document.querySelector('#newtrip-page-title');
+    if (pageH && editingTripIndex !== null) pageH.textContent = 'Edit Trip';
+}
+
+function changeMembers(change) {
+    memberCount += change;
+    if (memberCount < 2) memberCount = 2;
+    if (memberCount > 20) memberCount = 20;
+    const cntEl = document.getElementById('memberCount');
+    if (cntEl) cntEl.textContent = memberCount;
+}
 
 function createTrip() {
     const destination = document.getElementById("destination").value.trim();
@@ -330,76 +578,74 @@ function createTrip() {
     hideMessage("newTripError");
 
     if (!destination || !startDate || !endDate || memberCount < 2) {
-        showError("newTripError", "⚠️ Please enter all trip details correctly.");
+        showError("newTripError", "⚠️ Please enter all trip details correctly (min. 2 members).");
         return;
     }
-
     if (new Date(startDate) > new Date(endDate)) {
         showError("newTripError", "⚠️ Trip start date cannot be after the trip end date.");
         return;
     }
 
+    const draft = { destination, startDate, endDate, currency, memberCount };
     if (editingTripIndex !== null && ongoingTripsData[editingTripIndex]) {
         const oldTrip = ongoingTripsData[editingTripIndex];
-        tripData = {
-            ...oldTrip,
-            destination,
-            startDate,
-            endDate,
-            currency,
-            memberCount,
-            members: oldTrip.members.slice(0, memberCount)
-        };
-        while (tripData.members.length < memberCount) {
-            tripData.members.push({ name: "", expenses: [] });
-        }
-    } else {
-        tripData = {
-            destination,
-            startDate,
-            endDate,
-            currency,
-            memberCount,
-            members: [],
-            isCompleted: false
-        };
+        draft._id = oldTrip._id;
+        draft.localId = oldTrip.localId;
+        draft.existingMembers = oldTrip.members.slice(0, memberCount).map(m => m.name);
     }
-
-    generateMemberInputs();
-    showPage("memberNamesPage");
+    saveDraftTrip(draft);
+    navigate('/member-names.html');
 }
 
 /* =========================================================
-   GENERATE MEMBER INPUTS
+   PAGE: member-names.html
 ========================================================= */
 
-function generateMemberInputs() {
-    const container = document.getElementById("memberInputs");
-    container.innerHTML = "";
+function pageMemberNamesInit() {
+    injectSharedChrome('memberNames', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'New Trip', href: 'new-trip.html' },
+        { label: 'Trip Members', current: true }
+    ]);
 
+    const draft = loadDraftTrip();
+    if (!draft || !draft.memberCount || !draft.destination) {
+        showToast('No trip draft found — starting a new trip.', 'info');
+        setTimeout(() => navigate('/new-trip.html'), 400);
+        return;
+    }
+    memberCount = Number(draft.memberCount) || 4;
+    if (memberCount < 2) memberCount = 2;
+    generateMemberInputs(draft.existingMembers || []);
+}
+
+function generateMemberInputs(prefillNames) {
+    const container = document.getElementById("memberInputs");
+    if (!container) return;
+    container.innerHTML = "";
     for (let i = 0; i < memberCount; i++) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin-bottom:14px;';
         const input = document.createElement("input");
         input.type = "text";
         input.className = "member-input";
         input.placeholder = "Member " + (i + 1) + " name";
         input.id = "member" + i;
-        if (tripData.members[i] && tripData.members[i].name) {
-            input.value = tripData.members[i].name;
-        }
-        container.appendChild(input);
+        if (prefillNames[i]) input.value = prefillNames[i];
+        wrap.appendChild(input);
+        container.appendChild(wrap);
     }
 }
 
-/* =========================================================
-   START / UPDATE TRIP
-========================================================= */
-
 async function startTrip() {
     hideMessage("memberError");
+    const draft = loadDraftTrip();
+    if (!draft) { navigate('/new-trip.html'); return; }
 
     const names = [];
     for (let i = 0; i < memberCount; i++) {
         const input = document.getElementById("member" + i);
+        if (!input) continue;
         const name = input.value.trim();
         if (!name) {
             showError("memberError", "⚠️ Please enter all member names before starting the trip.");
@@ -407,7 +653,6 @@ async function startTrip() {
         }
         names.push(name);
     }
-
     const normalizedNames = names.map(n => n.toLowerCase());
     const uniqueNames = new Set(normalizedNames);
     if (uniqueNames.size !== names.length) {
@@ -415,21 +660,46 @@ async function startTrip() {
         return;
     }
 
-    const oldMembers = tripData.members || [];
-    tripData.members = names.map((name, index) => ({
-        name,
-        expenses: oldMembers[index] && oldMembers[index].expenses ? oldMembers[index].expenses : []
-    }));
-    tripData.memberCount = memberCount;
-    tripData.currency = tripData.currency || 'INR';
+    const existingMembers = (draft.existingMembers || []);
+    const members = names.map((name, idx) => {
+        const origIdx = existingMembers.indexOf(name);
+        if (origIdx >= 0 && editingTripIndex !== null && ongoingTripsData[editingTripIndex]) {
+            const m = ongoingTripsData[editingTripIndex].members[origIdx];
+            if (m) return { name, expenses: m.expenses ? m.expenses.slice() : [] };
+        }
+        return { name, expenses: [] };
+    });
 
     let localIdx;
-    if (editingTripIndex === null) {
-        ongoingTripsData.push(JSON.parse(JSON.stringify(tripData)));
-        localIdx = ongoingTripsData.length - 1;
-    } else {
-        ongoingTripsData[editingTripIndex] = JSON.parse(JSON.stringify(tripData));
+    if (editingTripIndex !== null && ongoingTripsData[editingTripIndex]) {
+        const old = ongoingTripsData[editingTripIndex];
+        ongoingTripsData[editingTripIndex] = {
+            ...old,
+            destination: draft.destination,
+            startDate: draft.startDate,
+            endDate: draft.endDate,
+            currency: draft.currency,
+            memberCount,
+            members
+        };
         localIdx = editingTripIndex;
+    } else {
+        const newTrip = {
+            destination: draft.destination,
+            startDate: draft.startDate,
+            endDate: draft.endDate,
+            currency: draft.currency,
+            memberCount,
+            members,
+            isCompleted: false,
+            localId: (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : 'trip-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+        };
+        if (draft._id) newTrip._id = draft._id;
+        if (draft.localId) newTrip.localId = draft.localId;
+        ongoingTripsData.push(newTrip);
+        localIdx = ongoingTripsData.length - 1;
     }
 
     persistAll();
@@ -437,17 +707,10 @@ async function startTrip() {
     try {
         const payload = JSON.parse(JSON.stringify(ongoingTripsData[localIdx]));
         const hasId = !!payload._id;
-        delete payload._id;
-        delete payload.__v;
-        delete payload.createdAt;
-        delete payload.updatedAt;
-
+        delete payload._id; delete payload.__v; delete payload.createdAt; delete payload.updatedAt; delete payload.localId;
         let result;
-        if (hasId) {
-            result = await api('PUT', `/${ongoingTripsData[localIdx]._id}`, payload);
-        } else {
-            result = await api('POST', '/', payload);
-        }
+        if (hasId) result = await api('PUT', `/${ongoingTripsData[localIdx]._id}`, stripInternal(ongoingTripsData[localIdx]));
+        else result = await api('POST', '/', stripInternal(ongoingTripsData[localIdx]));
         if (result && result._id) {
             ongoingTripsData[localIdx]._id = result._id;
             saveToStorage();
@@ -456,91 +719,82 @@ async function startTrip() {
         console.warn('Backend save failed, using local storage only.', e);
     }
 
-    currentTripIndex = localIdx;
+    clearDraftTrip();
     editingTripIndex = null;
-    loadDashboard();
-    showPage("dashboardPage");
+    showToast('Trip started successfully!', 'success', 2500);
+    navigate('/dashboard.html', { tripId: ongoingTripsData[localIdx].localId });
 }
 
 /* =========================================================
-   EDIT CURRENT TRIP
+   PAGE: dashboard.html
 ========================================================= */
 
-function editCurrentTrip() {
-    if (currentTripIndex === null || !ongoingTripsData[currentTripIndex]) return;
+function pageDashboardInit() {
+    bootstrapStateFromQuery();
+    const ctx = currentTripCtx();
+    if (!ctx) {
+        showToast('Trip not found. Returning home.', 'error');
+        setTimeout(() => navigate('/home.html'), 600);
+        return;
+    }
+    injectSharedChrome('dashboard', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'Ongoing Trips', href: 'ongoing.html' },
+        { label: `Trip: ${ctx.trip.destination}`, href: `trip-members.html?tripId=${ctx.trip.localId}` },
+        { label: 'Dashboard', current: true }
+    ]);
 
-    editingTripIndex = currentTripIndex;
-    const trip = ongoingTripsData[currentTripIndex];
+    loadDashboard(ctx.trip);
+    const editBtn = document.getElementById('editTripLink');
+    if (editBtn) editBtn.href = `new-trip.html?tripId=${ctx.trip.localId}`;
+    const manageBtn = document.getElementById('manageExpensesBtn');
+    if (manageBtn) manageBtn.href = `trip-members.html?tripId=${ctx.trip.localId}`;
 
-    document.getElementById("destination").value = trip.destination;
-    document.getElementById("startDate").value = trip.startDate;
-    document.getElementById("endDate").value = trip.endDate;
-    memberCount = trip.members.length;
-    document.getElementById("memberCount").textContent = memberCount;
-    renderCurrencySelect(trip.currency || 'INR', 'currencySelect');
-
-    tripData = JSON.parse(JSON.stringify(trip));
-    showPage("newTripPage");
+    setTimeout(() => triggerConfetti(70), 150);
 }
 
-/* =========================================================
-   DASHBOARD
-========================================================= */
-
-function loadDashboard() {
-    const trip = ongoingTripsData[currentTripIndex];
-    if (!trip) return;
-
-    document.getElementById("dashboardTripInfo").innerHTML = `
-        <div class="info-item">
-            <span>Destination</span>
-            <strong>${escapeHTML(trip.destination)}</strong>
-        </div>
-        <div class="info-item">
-            <span>Members</span>
-            <strong>${trip.members.length}</strong>
-        </div>
-        <div class="info-item">
-            <span>Currency</span>
-            <strong>${getCurrencySymbol(trip.currency || 'INR')} ${trip.currency || 'INR'}</strong>
-        </div>
-        <div class="info-item">
-            <span>Dates</span>
-            <strong>${formatDate(trip.startDate)} - ${formatDate(trip.endDate)}</strong>
-        </div>
+function loadDashboard(trip) {
+    const info = document.getElementById("dashboardTripInfo");
+    const membersEl = document.getElementById("dashboardMembers");
+    if (info) info.innerHTML = `
+        <div class="info-item"><span>Destination</span><strong>${escapeHTML(trip.destination)}</strong></div>
+        <div class="info-item"><span>Members</span><strong>${trip.members.length}</strong></div>
+        <div class="info-item"><span>Currency</span><strong>${getCurrencySymbol(trip.currency || 'INR')} ${trip.currency || 'INR'}</strong></div>
+        <div class="info-item"><span>Dates</span><strong>${formatDate(trip.startDate)} - ${formatDate(trip.endDate)}</strong></div>
     `;
-
-    document.getElementById("dashboardMembers").innerHTML =
-        trip.members.map(member => `
-            <div class="member-chip">${escapeHTML(member.name)}</div>
-        `).join("");
+    if (membersEl) membersEl.innerHTML =
+        trip.members.map(m => `<div class="member-chip">${escapeHTML(m.name)}</div>`).join("");
 }
 
 /* =========================================================
-   ONGOING TRIPS
+   PAGE: ongoing.html
 ========================================================= */
 
-function showOngoingTrips() {
+function pageOngoingInit() {
+    bootstrapStateFromQuery();
+    injectSharedChrome('ongoing', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'Ongoing Trips', current: true }
+    ]);
     renderOngoingTrips();
-    showPage("ongoingTripsPage");
 }
 
 function renderOngoingTrips() {
     const container = document.getElementById("ongoingTripsList");
-
+    if (!container) return;
     if (ongoingTripsData.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
                 <div class="empty-icon">🧳</div>
                 <h3>No Ongoing Trips</h3>
                 <p>You haven't started any trips yet. Create a new trip and it will appear here.</p>
+                <a class="primary-btn" href="new-trip.html">✈️ Create New Trip</a>
             </div>
         `;
         return;
     }
-
-    container.innerHTML = ongoingTripsData.map((trip, index) => `
-        <div class="trip-card" onclick="if(!event.target.closest('.delete-btn')) openTrip(${index})">
+    container.innerHTML = ongoingTripsData.map((trip) => `
+        <div class="trip-card" data-id="${trip.localId}">
             <div class="trip-card-top">
                 <div class="trip-destination">${escapeHTML(trip.destination)}</div>
                 <div class="ongoing-badge">ONGOING</div>
@@ -551,162 +805,244 @@ function renderOngoingTrips() {
                 ${getCurrencySymbol(trip.currency || 'INR')} ${trip.currency || 'INR'}
             </div>
             <div class="trip-card-members">
-                ${trip.members.map(member => `
-                    <div class="small-member">${escapeHTML(member.name)}</div>
-                `).join("")}
+                ${trip.members.map(m => `<div class="small-member">${escapeHTML(m.name)}</div>`).join("")}
             </div>
             <div class="trip-card-actions">
-                <button class="delete-btn" onclick="event.stopPropagation(); deleteOngoingTrip(${index})">
-                    🗑️ Delete Trip
-                </button>
+                <a class="primary-btn" style="padding:10px 18px;font-size:14px;"
+                   href="trip-members.html?tripId=${encodeURIComponent(trip.localId)}">
+                    🧾 Open Trip
+                </a>
+                <button class="delete-btn" data-delete="${encodeURIComponent(trip.localId)}">🗑️ Delete</button>
             </div>
         </div>
     `).join("");
+    container.querySelectorAll('[data-delete]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = btn.getAttribute('data-delete');
+            deleteOngoingTripByLocalId(id);
+        });
+    });
+}
+
+function deleteOngoingTripByLocalId(localId) {
+    const f = findTripByLocalId(localId);
+    if (!f || f.isPast) return;
+    const trip = f.trip;
+    if (!confirm(`Delete the trip to "${trip.destination}"? This cannot be undone.`)) return;
+    ongoingTripsData.splice(f.index, 1);
+    persistAll();
+    if (trip._id) { try { api('DELETE', `/${trip._id}`); } catch (e) {} }
+    renderOngoingTrips();
+    showToast('Trip deleted.', 'info', 2000);
 }
 
 /* =========================================================
-   DELETE ONGOING TRIP
+   PAGE: past.html
 ========================================================= */
 
-async function deleteOngoingTrip(index) {
-    const trip = ongoingTripsData[index];
-    if (!trip) return;
+function pagePastInit() {
+    bootstrapStateFromQuery();
+    injectSharedChrome('past', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'Past Trips', current: true }
+    ]);
+    renderPastTrips();
+}
 
-    if (!confirm(`Are you sure you want to delete the trip to "${trip.destination}"? This action cannot be undone.`)) {
+function renderPastTrips() {
+    const container = document.getElementById("pastTripsList");
+    if (!container) return;
+    if (pastTripsData.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📜</div>
+                <h3>No Past Trips Yet</h3>
+                <p>Completed trips will appear here after you finish a trip and click "End Trip".</p>
+                <a class="primary-btn" href="home.html">🏠 Go Home & Start a Trip</a>
+            </div>
+        `;
         return;
     }
-
-    const id = trip._id;
-    ongoingTripsData.splice(index, 1);
-    persistAll();
-
-    if (currentTripIndex === index) currentTripIndex = null;
-    else if (currentTripIndex !== null && currentTripIndex > index) currentTripIndex--;
-
-    renderOngoingTrips();
-
-    if (id) {
-        try { await api('DELETE', `/${id}`); } catch (e) {}
-    }
-}
-
-/* =========================================================
-   OPEN ONGOING TRIP
-========================================================= */
-
-function openTrip(index) {
-    currentTripIndex = index;
-    currentMemberIndex = null;
-    renderMemberSelection();
-    showPage("memberSelectionPage");
-}
-
-/* =========================================================
-   MEMBER SELECTION
-========================================================= */
-
-function renderMemberSelection() {
-    const trip = ongoingTripsData[currentTripIndex];
-    if (!trip) return;
-
-    document.getElementById("memberSelectionTitle").textContent = trip.destination + " — Members";
-
-    const container = document.getElementById("memberSelectionGrid");
-    container.innerHTML = trip.members.map((member, index) => {
-        const totalSpent = member.expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+    container.innerHTML = pastTripsData.map((trip) => {
+        const cur = trip.currency || 'INR';
+        const total = trip.summary ? trip.summary.totalExpense : 0;
         return `
-            <div class="member-select-card" onclick="selectMember(${index})">
-                <div class="member-avatar">
-                    ${escapeHTML(member.name.charAt(0).toUpperCase())}
+            <div class="trip-card past-trip-card">
+                <div class="trip-card-top">
+                    <div class="trip-destination">${escapeHTML(trip.destination)}</div>
+                    <div class="past-badge">COMPLETED</div>
                 </div>
-                <h3>${escapeHTML(member.name)}</h3>
-                <p>
-                    ${member.expenses.length} ${member.expenses.length === 1 ? 'expense' : 'expenses'}
-                    <br>Total: ${formatMoney(totalSpent, trip.currency)}
-                </p>
+                <div class="trip-dates">
+                    ${formatDate(trip.startDate)} → ${formatDate(trip.endDate)} &nbsp; • &nbsp;
+                    ${trip.members.length} members &nbsp; • &nbsp;
+                    Total: ${formatMoney(total, cur)}
+                </div>
+                <div class="trip-card-members">
+                    ${trip.members.map(m => `<div class="small-member">${escapeHTML(m.name)}</div>`).join("")}
+                </div>
+                <div class="trip-card-actions">
+                    <a class="primary-btn" style="padding:10px 18px;font-size:14px;"
+                       href="summary.html?tripId=${encodeURIComponent(trip.localId)}&past=1">
+                        📊 View Summary
+                    </a>
+                    <button class="delete-btn" data-delete="${encodeURIComponent(trip.localId)}">🗑️ Delete</button>
+                </div>
             </div>
         `;
     }).join("");
+    container.querySelectorAll('[data-delete]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            deletePastTripByLocalId(btn.getAttribute('data-delete'));
+        });
+    });
+}
+
+function deletePastTripByLocalId(localId) {
+    const f = findTripByLocalId(localId);
+    if (!f || !f.isPast) return;
+    const trip = f.trip;
+    if (!confirm(`Delete past trip to "${trip.destination}"? This cannot be undone.`)) return;
+    pastTripsData.splice(f.index, 1);
+    persistAll();
+    if (trip._id) { try { api('DELETE', `/${trip._id}`); } catch (e) {} }
+    renderPastTrips();
+    showToast('Past trip deleted.', 'info', 2000);
 }
 
 /* =========================================================
-   SELECT MEMBER
+   PAGE: trip-members.html
 ========================================================= */
 
-function selectMember(index) {
-    currentMemberIndex = index;
-    editingExpenseIndex = null;
+function pageTripMembersInit() {
+    bootstrapStateFromQuery();
+    const ctx = currentTripCtx();
+    if (!ctx) {
+        showToast('Trip not found.', 'error');
+        setTimeout(() => navigate('/home.html'), 500);
+        return;
+    }
+    const segs = [
+        { label: 'Home', href: 'home.html' },
+        { label: ctx.isPast ? 'Past Trips' : 'Ongoing Trips', href: ctx.isPast ? 'past.html' : 'ongoing.html' },
+        { label: `Trip: ${ctx.trip.destination}`, href: ctx.isPast
+            ? `summary.html?tripId=${ctx.trip.localId}&past=1`
+            : `trip-members.html?tripId=${ctx.trip.localId}` },
+        { label: 'Members', current: true }
+    ];
+    injectSharedChrome('tripMembers', segs, ctx.isPast ? 'past' : 'ongoing');
+    renderMemberSelection(ctx);
+}
+
+function renderMemberSelection(ctx) {
+    ctx = ctx || currentTripCtx();
+    if (!ctx) return;
+    const title = document.getElementById("memberSelectionTitle");
+    if (title) title.textContent = ctx.trip.destination + " — Members";
+    const container = document.getElementById("memberSelectionGrid");
+    if (container) container.innerHTML = ctx.trip.members.map((member, index) => {
+        const totalSpent = member.expenses.reduce((s, e) => s + Number(e.amount), 0);
+        return `
+            <a class="member-select-card" tabindex="0"
+               href="expense.html?tripId=${encodeURIComponent(ctx.trip.localId)}&memberIdx=${index}">
+                <div class="member-avatar">${escapeHTML(member.name.charAt(0).toUpperCase())}</div>
+                <h3>${escapeHTML(member.name)}</h3>
+                <p>
+                    ${member.expenses.length} ${member.expenses.length === 1 ? 'expense' : 'expenses'}
+                    <br>Total: ${formatMoney(totalSpent, ctx.trip.currency)}
+                </p>
+            </a>
+        `;
+    }).join("");
+
+    const completeBtn = document.getElementById("completeTripBtn");
+    if (completeBtn) {
+        if (ctx.isPast) {
+            completeBtn.style.display = 'none';
+        } else {
+            completeBtn.style.display = 'inline-flex';
+            completeBtn.onclick = () => {
+                const summary = buildSummaryData(ctx.trip);
+                ctx.trip.summary = summary;
+                persistAll();
+                navigate('/summary.html', { tripId: ctx.trip.localId });
+            };
+        }
+    }
+}
+
+/* =========================================================
+   PAGE: expense.html
+========================================================= */
+
+function pageExpenseInit() {
+    bootstrapStateFromQuery();
+    const ctx = currentTripCtx();
+    if (!ctx || ctx.isPast || currentMemberIndex === null || !ctx.trip.members[currentMemberIndex]) {
+        showToast('Invalid expense context. Returning to trip members.', 'error');
+        const lid = currentLocalIdOfTrip();
+        setTimeout(() => navigate('/trip-members.html', lid ? { tripId: lid } : undefined), 500);
+        return;
+    }
+    const member = ctx.trip.members[currentMemberIndex];
+    injectSharedChrome('expense', [
+        { label: 'Home', href: 'home.html' },
+        { label: 'Ongoing Trips', href: 'ongoing.html' },
+        { label: `Trip: ${ctx.trip.destination}`, href: `trip-members.html?tripId=${ctx.trip.localId}` },
+        { label: `Member: ${member.name}`, href: `trip-members.html?tripId=${ctx.trip.localId}` },
+        { label: 'Add Expense', current: true }
+    ]);
     customSplitMode = false;
     selectedSplitMemberIndices = [];
-
-    renderSelectedMember();
-    renderSplitSection();
-    renderMemberExpenses();
-
+    renderSelectedMember(ctx, member);
+    renderSplitSection(ctx);
+    renderMemberExpenses(ctx, member);
     hideMessage("expenseError");
     hideMessage("expenseSuccess");
-
     resetExpenseForm();
-    showPage("expensePage");
 }
 
-/* =========================================================
-   SELECTED MEMBER
-========================================================= */
-
-function renderSelectedMember() {
-    const trip = ongoingTripsData[currentTripIndex];
-    const member = trip.members[currentMemberIndex];
-
-    document.getElementById("selectedMemberBox").innerHTML = `
-        <div class="member-avatar" style="margin:0;">
-            ${escapeHTML(member.name.charAt(0).toUpperCase())}
-        </div>
+function renderSelectedMember(ctx, member) {
+    const box = document.getElementById("selectedMemberBox");
+    if (!box) return;
+    box.innerHTML = `
+        <div class="member-avatar" style="margin:0;">${escapeHTML(member.name.charAt(0).toUpperCase())}</div>
         <div>
             <strong>${escapeHTML(member.name)}</strong>
-            <div style="color:#94a3b8;font-size:13px;margin-top:4px;">
-                Adding expenses for this member
-            </div>
+            <div style="color:#94a3b8;font-size:13px;margin-top:4px;">Adding expenses paid by this member</div>
         </div>
     `;
 }
 
-/* =========================================================
-   SPLIT SECTION
-========================================================= */
-
-function renderSplitSection() {
-    const trip = ongoingTripsData[currentTripIndex];
+function renderSplitSection(ctx) {
+    ctx = ctx || currentTripCtx();
+    if (!ctx) return;
     const container = document.getElementById('splitSectionContainer');
     if (!container) return;
-
-    const allSelected = selectedSplitMemberIndices.length === 0 || selectedSplitMemberIndices.length === trip.members.length;
+    const allSelected = selectedSplitMemberIndices.length === 0 || selectedSplitMemberIndices.length === ctx.trip.members.length;
     const isAll = !customSplitMode || allSelected;
-
     container.innerHTML = `
         <div class="split-section">
             <div class="split-section-label">
                 <label>💰 Split this expense with:</label>
-                <button type="button" class="toggle-split-btn" onclick="toggleSplitMode()">
+                <button type="button" class="toggle-split-btn" id="toggleSplitBtn">
                     ${customSplitMode ? '✓ Custom Split' : '👥 Equal (All Members)'}
                 </button>
             </div>
             <div style="color:#94a3b8;font-size:13px;">
                 ${isAll
-                    ? `Split equally among <strong style="color:#cbd5e1;">all ${trip.members.length} members</strong>`
+                    ? `Split equally among <strong style="color:#cbd5e1;">all ${ctx.trip.members.length} members</strong>`
                     : `Split among <strong style="color:#c7d2fe;">${selectedSplitMemberIndices.length} selected members</strong>`
                 }
             </div>
             ${customSplitMode ? `
-                <div class="split-members-grid">
-                    ${trip.members.map((m, i) => {
+                <div class="split-members-grid" id="splitMembersGrid">
+                    ${ctx.trip.members.map((m, i) => {
                         const isChecked = selectedSplitMemberIndices.length === 0
                             ? true
                             : selectedSplitMemberIndices.includes(i);
                         return `
                             <label class="split-member-item ${isChecked ? 'selected' : ''}">
-                                <input type="checkbox" ${isChecked ? 'checked' : ''}
-                                    onchange="toggleSplitMember(${i}, this.checked)">
+                                <input type="checkbox" ${isChecked ? 'checked' : ''} data-i="${i}">
                                 <span>${escapeHTML(m.name)}</span>
                             </label>
                         `;
@@ -715,95 +1051,81 @@ function renderSplitSection() {
             ` : ''}
         </div>
     `;
+    const tgl = document.getElementById('toggleSplitBtn');
+    if (tgl) tgl.addEventListener('click', (e) => {
+        e.preventDefault();
+        customSplitMode = !customSplitMode;
+        if (customSplitMode) selectedSplitMemberIndices = ctx.trip.members.map((_, i) => i);
+        else selectedSplitMemberIndices = [];
+        renderSplitSection(ctx);
+    });
+    const grid = document.getElementById('splitMembersGrid');
+    if (grid) grid.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const i = parseInt(cb.getAttribute('data-i'), 10);
+            if (cb.checked) {
+                if (!selectedSplitMemberIndices.includes(i)) selectedSplitMemberIndices.push(i);
+            } else {
+                selectedSplitMemberIndices = selectedSplitMemberIndices.filter(x => x !== i);
+            }
+            renderSplitSection(ctx);
+        });
+    });
 }
 
-function toggleSplitMode() {
-    customSplitMode = !customSplitMode;
-    if (customSplitMode) {
-        const trip = ongoingTripsData[currentTripIndex];
-        selectedSplitMemberIndices = trip.members.map((_, i) => i);
-    } else {
-        selectedSplitMemberIndices = [];
-    }
-    renderSplitSection();
-}
-
-function toggleSplitMember(idx, checked) {
-    if (checked) {
-        if (!selectedSplitMemberIndices.includes(idx)) selectedSplitMemberIndices.push(idx);
-    } else {
-        selectedSplitMemberIndices = selectedSplitMemberIndices.filter(i => i !== idx);
-    }
-    renderSplitSection();
-}
-
-function getEffectiveSplitIndices() {
-    const trip = ongoingTripsData[currentTripIndex];
+function getEffectiveSplitIndices(ctx) {
+    ctx = ctx || currentTripCtx();
+    if (!ctx) return [];
     if (!customSplitMode || selectedSplitMemberIndices.length === 0) {
-        return trip.members.map((_, i) => i);
+        return ctx.trip.members.map((_, i) => i);
     }
     return [...selectedSplitMemberIndices].sort((a, b) => a - b);
 }
 
-/* =========================================================
-   RESET EXPENSE FORM
-========================================================= */
-
 function resetExpenseForm() {
-    document.getElementById("expenseAmount").value = "";
-    document.getElementById("expenseDescription").value = "";
-    document.getElementById("expenseSubmitBtn").textContent = "➕ Add Expense";
-    const title = document.querySelector('#expensePage .page-title');
-    if (title) title.classList.remove('edit-expense-title');
+    const amt = document.getElementById("expenseAmount");
+    const desc = document.getElementById("expenseDescription");
+    const btn = document.getElementById("expenseSubmitBtn");
+    if (amt) amt.value = "";
+    if (desc) desc.value = "";
+    if (btn) btn.textContent = "➕ Add Expense";
     editingExpenseIndex = null;
 }
 
-/* =========================================================
-   ADD / UPDATE EXPENSE
-========================================================= */
-
 async function addExpense() {
-    const amount = parseFloat(document.getElementById("expenseAmount").value);
-    const description = document.getElementById("expenseDescription").value.trim();
-
-    hideMessage("expenseError");
-    hideMessage("expenseSuccess");
+    const ctx = currentTripCtx();
+    if (!ctx || ctx.isPast || currentMemberIndex === null) return;
+    const amountEl = document.getElementById("expenseAmount");
+    const descEl = document.getElementById("expenseDescription");
+    const amount = parseFloat(amountEl.value);
+    const description = descEl.value.trim();
+    hideMessage("expenseError"); hideMessage("expenseSuccess");
 
     if (!amount || amount <= 0 || !description) {
-        showError("expenseError", "⚠️ Please enter a valid amount and expense description.");
+        showError("expenseError", "⚠️ Please enter a valid amount and description.");
         return;
     }
-
-    const splitIndices = getEffectiveSplitIndices();
+    const splitIndices = getEffectiveSplitIndices(ctx);
     if (splitIndices.length === 0) {
-        showError("expenseError", "⚠️ Please select at least one member to split this expense with.");
+        showError("expenseError", "⚠️ Please select at least one member to split with.");
         return;
     }
-
-    const trip = ongoingTripsData[currentTripIndex];
-    const member = trip.members[currentMemberIndex];
-    const tripId = trip._id;
-
-    const expenseData = {
-        amount,
-        description,
-        splitAmong: splitIndices
-    };
-
-    let savedExpenseIdx;
+    const member = ctx.trip.members[currentMemberIndex];
+    const expenseData = { amount, description, splitAmong: splitIndices };
+    let savedIdx;
     if (editingExpenseIndex !== null && member.expenses[editingExpenseIndex]) {
         member.expenses[editingExpenseIndex] = expenseData;
-        savedExpenseIdx = editingExpenseIndex;
-        showSuccess("expenseSuccess", "✅ Expense updated successfully!");
+        savedIdx = editingExpenseIndex;
+        showSuccess("expenseSuccess", "✅ Expense updated!");
+        showToast('Expense updated.', 'success', 1800);
     } else {
         member.expenses.push(expenseData);
-        savedExpenseIdx = member.expenses.length - 1;
-        showSuccess("expenseSuccess", "✅ Expense added successfully!");
+        savedIdx = member.expenses.length - 1;
+        showSuccess("expenseSuccess", "✅ Expense added!");
+        showToast('Expense added successfully.', 'success', 1800);
     }
-
     persistAll();
-
-    if (tripId) {
+    if (ctx.trip._id) {
         try {
             const body = {
                 memberIndex: currentMemberIndex,
@@ -812,105 +1134,78 @@ async function addExpense() {
                 splitAmong: expenseData.splitAmong
             };
             if (editingExpenseIndex !== null) {
-                body.expenseIndex = savedExpenseIdx;
-                await api('PUT', `/${tripId}/expenses`, body);
+                body.expenseIndex = savedIdx;
+                await api('PUT', `/${ctx.trip._id}/expenses`, body);
             } else {
-                await api('POST', `/${tripId}/expenses`, body);
+                await api('POST', `/${ctx.trip._id}/expenses`, body);
             }
         } catch (e) {
-            console.warn('Backend expense update failed, saved locally only.', e);
+            console.warn('Backend expense update failed.', e);
         }
     }
-
     resetExpenseForm();
-    renderMemberExpenses();
-    renderSelectedMember();
-    renderSplitSection();
+    renderMemberExpenses(ctx, member);
+    renderSelectedMember(ctx, member);
+    renderSplitSection(ctx);
 }
 
-/* =========================================================
-   EDIT EXPENSE
-========================================================= */
-
 function editExpense(expenseIndex) {
-    const trip = ongoingTripsData[currentTripIndex];
-    const member = trip.members[currentMemberIndex];
-    const expense = member.expenses[expenseIndex];
-    if (!expense) return;
-
+    const ctx = currentTripCtx();
+    if (!ctx) return;
+    const member = ctx.trip.members[currentMemberIndex];
+    const exp = member.expenses[expenseIndex];
+    if (!exp) return;
     editingExpenseIndex = expenseIndex;
-    document.getElementById("expenseAmount").value = expense.amount;
-    document.getElementById("expenseDescription").value = expense.description;
-
-    if (expense.splitAmong && expense.splitAmong.length > 0 && expense.splitAmong.length !== trip.members.length) {
+    document.getElementById("expenseAmount").value = exp.amount;
+    document.getElementById("expenseDescription").value = exp.description;
+    if (exp.splitAmong && exp.splitAmong.length > 0 && exp.splitAmong.length !== ctx.trip.members.length) {
         customSplitMode = true;
-        selectedSplitMemberIndices = [...expense.splitAmong];
+        selectedSplitMemberIndices = [...exp.splitAmong];
     } else {
         customSplitMode = false;
         selectedSplitMemberIndices = [];
     }
-
-    renderSplitSection();
-    document.getElementById("expenseSubmitBtn").textContent = "💾 Update Expense";
-    const title = document.querySelector('#expensePage .page-title');
-    if (title) title.classList.add('edit-expense-title');
-
-    hideMessage("expenseError");
-    hideMessage("expenseSuccess");
+    renderSplitSection(ctx);
+    const btn = document.getElementById("expenseSubmitBtn");
+    if (btn) btn.textContent = "💾 Update Expense";
+    hideMessage("expenseError"); hideMessage("expenseSuccess");
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* =========================================================
-   DELETE EXPENSE
-========================================================= */
-
 async function deleteExpense(expenseIndex) {
-    const trip = ongoingTripsData[currentTripIndex];
-    const member = trip.members[currentMemberIndex];
-    const expense = member.expenses[expenseIndex];
-    if (!expense) return;
-
-    if (!confirm(`Delete expense "${expense.description}" (${formatMoney(expense.amount, trip.currency)})?`)) return;
-
+    const ctx = currentTripCtx();
+    if (!ctx) return;
+    const member = ctx.trip.members[currentMemberIndex];
+    const exp = member.expenses[expenseIndex];
+    if (!exp) return;
+    if (!confirm(`Delete expense "${exp.description}" (${formatMoney(exp.amount, ctx.trip.currency)})?`)) return;
     member.expenses.splice(expenseIndex, 1);
-
     if (editingExpenseIndex === expenseIndex) resetExpenseForm();
     else if (editingExpenseIndex !== null && editingExpenseIndex > expenseIndex) editingExpenseIndex--;
-
     persistAll();
-    renderMemberExpenses();
-    renderSelectedMember();
-
-    if (trip._id) {
+    renderMemberExpenses(ctx, member);
+    renderSelectedMember(ctx, member);
+    if (ctx.trip._id) {
         try {
-            await api('DELETE', `/${trip._id}/expenses`, {
-                memberIndex: currentMemberIndex,
-                expenseIndex
-            });
+            await api('DELETE', `/${ctx.trip._id}/expenses`, { memberIndex: currentMemberIndex, expenseIndex });
         } catch (e) {}
     }
+    showToast('Expense deleted.', 'info', 1600);
 }
 
-/* =========================================================
-   RENDER EXPENSES
-========================================================= */
-
-function renderMemberExpenses() {
-    const trip = ongoingTripsData[currentTripIndex];
-    const member = trip.members[currentMemberIndex];
+function renderMemberExpenses(ctx, member) {
+    ctx = ctx || currentTripCtx();
+    if (!ctx) return;
     const container = document.getElementById("memberExpenseList");
-
+    if (!container) return;
     if (member.expenses.length === 0) {
-        container.innerHTML = `
-            <p style="color:#64748b;font-size:14px;">No expenses added yet.</p>
-        `;
+        container.innerHTML = `<p style="color:#64748b;font-size:14px;">No expenses added yet for this member.</p>`;
         return;
     }
-
     container.innerHTML = member.expenses.map((expense, idx) => {
         let splitText = '';
-        if (expense.splitAmong && expense.splitAmong.length > 0 && expense.splitAmong.length !== trip.members.length) {
-            const names = expense.splitAmong.map(i => trip.members[i]?.name || '').filter(Boolean);
+        if (expense.splitAmong && expense.splitAmong.length > 0 && expense.splitAmong.length !== ctx.trip.members.length) {
+            const names = expense.splitAmong.map(i => ctx.trip.members[i]?.name || '').filter(Boolean);
             splitText = `<div class="expense-meta">👥 Split with: ${names.map(n => escapeHTML(n)).join(', ')}</div>`;
         }
         return `
@@ -920,85 +1215,90 @@ function renderMemberExpenses() {
                     ${splitText}
                 </div>
                 <div class="expense-item-right">
-                    <div class="expense-amount">${formatMoney(expense.amount, trip.currency)}</div>
+                    <div class="expense-amount">${formatMoney(expense.amount, ctx.trip.currency)}</div>
                     <div class="expense-actions">
-                        <button class="expense-edit-btn" onclick="editExpense(${idx})">✏️ Edit</button>
-                        <button class="expense-delete-btn" onclick="deleteExpense(${idx})">🗑️</button>
+                        <button class="expense-edit-btn" data-edit="${idx}">✏️ Edit</button>
+                        <button class="expense-delete-btn" data-del="${idx}">🗑️</button>
                     </div>
                 </div>
             </div>
         `;
-    }).join("");
+    }).join('');
+    container.querySelectorAll('[data-edit]').forEach(b => {
+        b.addEventListener('click', () => editExpense(parseInt(b.getAttribute('data-edit'), 10)));
+    });
+    container.querySelectorAll('[data-del]').forEach(b => {
+        b.addEventListener('click', () => deleteExpense(parseInt(b.getAttribute('data-del'), 10)));
+    });
 }
 
 /* =========================================================
-   BACK NAV
+   PAGE: summary.html
 ========================================================= */
 
-function backToMembers() {
-    renderMemberSelection();
-    showPage("memberSelectionPage");
+function pageSummaryInit() {
+    bootstrapStateFromQuery();
+    const ctx = currentTripCtx();
+    if (!ctx) {
+        const q = getQuery();
+        const dest = q.past === '1' ? '/past.html' : '/home.html';
+        showToast('Trip not found.', 'error');
+        setTimeout(() => navigate(dest), 500);
+        return;
+    }
+    injectSharedChrome('summary', [
+        { label: 'Home', href: 'home.html' },
+        { label: ctx.isPast ? 'Past Trips' : 'Ongoing Trips', href: ctx.isPast ? 'past.html' : 'ongoing.html' },
+        { label: `Trip: ${ctx.trip.destination}`, href: ctx.isPast
+            ? `summary.html?tripId=${ctx.trip.localId}&past=1`
+            : `trip-members.html?tripId=${ctx.trip.localId}` },
+        { label: 'Summary', current: true }
+    ], ctx.isPast ? 'past' : 'ongoing');
+    const summary = ctx.trip.summary || buildSummaryData(ctx.trip);
+    ctx.trip.summary = summary;
+    renderSummary(ctx.trip, summary);
+    const section = document.getElementById("endTripSection");
+    const backBtn = document.getElementById("summaryBackButton");
+    if (section) section.style.display = ctx.isPast ? 'none' : 'block';
+    if (backBtn) {
+        backBtn.style.display = 'inline-block';
+        backBtn.href = ctx.isPast
+            ? 'past.html'
+            : `trip-members.html?tripId=${ctx.trip.localId}`;
+    }
+    const shareBtn = document.getElementById('shareSummaryBtn');
+    if (shareBtn) shareBtn.style.display = 'inline-block';
+    const endBtn = document.getElementById('endTripBtn');
+    if (endBtn) endBtn.addEventListener('click', () => endTrip());
 }
-
-function backToOngoingTrips() {
-    renderOngoingTrips();
-    showPage("ongoingTripsPage");
-}
-
-/* =========================================================
-   COMPLETE TRIP
-========================================================= */
-
-async function completeTrip() {
-    if (currentTripIndex === null || !ongoingTripsData[currentTripIndex]) return;
-
-    const trip = ongoingTripsData[currentTripIndex];
-    calculateTripSummary(trip);
-
-    document.getElementById("endTripSection").style.display = "block";
-    document.getElementById("summaryBackButton").style.display = "inline-block";
-    document.getElementById("shareSummaryBtn").style.display = "inline-block";
-
-    showPage("tripSummaryPage");
-}
-
-/* =========================================================
-   BUILD SUMMARY (with custom splits)
-========================================================= */
 
 function buildSummaryData(trip) {
     let totalExpense = 0;
     const n = trip.members.length;
     const personPaid = new Array(n).fill(0);
     const personOwe = new Array(n).fill(0);
-
     trip.members.forEach((member, payerIdx) => {
         (member.expenses || []).forEach(expense => {
             const amt = Number(expense.amount);
             totalExpense += amt;
             personPaid[payerIdx] += amt;
-
             const splitAmong = expense.splitAmong && expense.splitAmong.length > 0
                 ? expense.splitAmong
                 : trip.members.map((_, i) => i);
-
             const share = amt / splitAmong.length;
             splitAmong.forEach(i => {
                 if (i >= 0 && i < n) personOwe[i] += share;
             });
         });
     });
-
     const perPersonBalances = trip.members.map((member, i) => ({
         name: member.name,
         spent: personPaid[i],
         balance: personPaid[i] - personOwe[i]
     }));
-
     const settlements = calculateSettlementsFromBalances(
         perPersonBalances.map(p => ({ name: p.name, amount: p.balance }))
     );
-
     return {
         totalExpense,
         personPaid,
@@ -1010,22 +1310,15 @@ function buildSummaryData(trip) {
     };
 }
 
-/* =========================================================
-   SETTLEMENT FROM BALANCES
-========================================================= */
-
 function calculateSettlementsFromBalances(balances) {
     const creditors = [];
     const debtors = [];
-
     balances.forEach(p => {
         if (p.amount > 0.005) creditors.push({ name: p.name, amount: p.amount });
         if (p.amount < -0.005) debtors.push({ name: p.name, amount: Math.abs(p.amount) });
     });
-
     const settlements = [];
     let ci = 0, di = 0;
-
     while (ci < creditors.length && di < debtors.length) {
         const c = creditors[ci];
         const d = debtors[di];
@@ -1039,113 +1332,54 @@ function calculateSettlementsFromBalances(balances) {
     return settlements;
 }
 
-function calculateSettlements(personTotals, equalShare) {
-    return calculateSettlementsFromBalances(
-        personTotals.map(p => ({ name: p.name, amount: p.spent - equalShare }))
-    );
-}
-
-/* =========================================================
-   CALCULATE / RENDER SUMMARY
-========================================================= */
-
-function calculateTripSummary(trip) {
-    const summary = buildSummaryData(trip);
-    trip.summary = JSON.parse(JSON.stringify(summary));
-    renderSummary(trip, summary);
-}
-
 function renderSummary(trip, summary) {
     const cur = trip.currency || 'INR';
-
-    document.getElementById("summaryDestination").textContent =
-        trip.destination + " — Final Expense Summary";
-
-    document.getElementById("summaryTotal").innerHTML = `
-        <span>Total Money Spent</span>
-        <strong>${formatMoney(summary.totalExpense, cur)}</strong>
-    `;
-
-    document.getElementById("summaryShare").innerHTML = `
-        <span>Average per Person (Total ÷ ${trip.members.length})</span>
-        <strong>${formatMoney(summary.equalShare, cur)}</strong>
-    `;
-
+    const destH = document.getElementById("summaryDestination");
+    if (destH) destH.textContent = trip.destination + " — Final Expense Summary";
+    const totalEl = document.getElementById("summaryTotal");
+    if (totalEl) totalEl.innerHTML = `<span>Total Money Spent</span><strong>${formatMoney(summary.totalExpense, cur)}</strong>`;
+    const shareEl = document.getElementById("summaryShare");
+    if (shareEl) shareEl.innerHTML = `<span>Average per Person (Total ÷ ${trip.members.length})</span><strong>${formatMoney(summary.equalShare, cur)}</strong>`;
     renderPersonSummary(summary.perPersonBalances || summary.personTotals, summary.equalShare, cur, summary);
     renderSettlements(summary.settlements, cur);
 }
 
-/* =========================================================
-   PERSON SUMMARY
-========================================================= */
-
 function renderPersonSummary(balances, equalShare, currency, fullSummary) {
     const container = document.getElementById("personSummary");
-
-    if (balances && balances[0] && typeof balances[0].balance !== 'undefined') {
-        container.innerHTML = balances.map((person, idx) => {
-            const balance = person.balance;
-            let balanceHTML;
-            if (balance > 0.005) {
-                balanceHTML = `<div class="balance-positive">Gets back ${formatMoney(balance, currency)}</div>`;
-            } else if (balance < -0.005) {
-                balanceHTML = `<div class="balance-negative">Owes ${formatMoney(Math.abs(balance), currency)}</div>`;
-            } else {
-                balanceHTML = `<div style="color:#94a3b8;font-weight:700;">Settled</div>`;
-            }
-            const spent = person.spent;
-            const owe = fullSummary && fullSummary.personOwe
-                ? fullSummary.personOwe[idx]
-                : equalShare;
-            return `
-                <div class="summary-person">
-                    <div>
-                        <div class="summary-person-name">${escapeHTML(person.name)}</div>
-                        <div class="summary-person-spent">
-                            Paid: ${formatMoney(spent, currency)}
-                            ${fullSummary && fullSummary.personOwe ? ` • Their share: ${formatMoney(owe, currency)}` : ''}
-                        </div>
+    if (!container) return;
+    const renderBalance = (b, idx) => {
+        const balance = typeof b.balance !== 'undefined' ? b.balance : (b.spent - equalShare);
+        let balanceHTML;
+        if (balance > 0.005) balanceHTML = `<div class="balance-positive">Gets back ${formatMoney(balance, currency)}</div>`;
+        else if (balance < -0.005) balanceHTML = `<div class="balance-negative">Owes ${formatMoney(Math.abs(balance), currency)}</div>`;
+        else balanceHTML = `<div style="color:#94a3b8;font-weight:700;">Settled</div>`;
+        const spent = b.spent;
+        const owe = fullSummary && fullSummary.personOwe
+            ? fullSummary.personOwe[idx]
+            : equalShare;
+        return `
+            <div class="summary-person">
+                <div>
+                    <div class="summary-person-name">${escapeHTML(b.name)}</div>
+                    <div class="summary-person-spent">
+                        Paid: ${formatMoney(spent, currency)}
+                        ${fullSummary && fullSummary.personOwe ? ` • Their share: ${formatMoney(owe, currency)}` : ''}
                     </div>
-                    ${balanceHTML}
                 </div>
-            `;
-        }).join("");
-    } else {
-        container.innerHTML = balances.map(person => {
-            const balance = person.spent - equalShare;
-            let balanceHTML;
-            if (balance > 0.005) {
-                balanceHTML = `<div class="balance-positive">Gets back ${formatMoney(balance, currency)}</div>`;
-            } else if (balance < -0.005) {
-                balanceHTML = `<div class="balance-negative">Owes ${formatMoney(Math.abs(balance), currency)}</div>`;
-            } else {
-                balanceHTML = `<div style="color:#94a3b8;font-weight:700;">Settled</div>`;
-            }
-            return `
-                <div class="summary-person">
-                    <div>
-                        <div class="summary-person-name">${escapeHTML(person.name)}</div>
-                        <div class="summary-person-spent">Spent: ${formatMoney(person.spent, currency)}</div>
-                    </div>
-                    ${balanceHTML}
-                </div>
-            `;
-        }).join("");
-    }
+                ${balanceHTML}
+            </div>
+        `;
+    };
+    container.innerHTML = balances.map((b, i) => renderBalance(b, i)).join('');
 }
-
-/* =========================================================
-   RENDER SETTLEMENTS
-========================================================= */
 
 function renderSettlements(settlements, currency) {
     const container = document.getElementById("settlementList");
-
+    if (!container) return;
     if (settlements.length === 0) {
-        container.innerHTML = `<div class="settlement-item">✅ Everyone is settled!</div>`;
+        container.innerHTML = `<div class="settlement-item">✅ Everyone is settled up!</div>`;
         return;
     }
-
     container.innerHTML = settlements.map(s => `
         <div class="settlement-item">
             <strong>${escapeHTML(s.from)}</strong> → <strong>${escapeHTML(s.to)}</strong>
@@ -1154,33 +1388,18 @@ function renderSettlements(settlements, currency) {
     `).join("");
 }
 
-/* =========================================================
-   SHARE SUMMARY (COPY)
-========================================================= */
-
 function shareSummary() {
-    let trip, summary;
-    const isPast = viewingPastTripIndex !== null && pastTripsData[viewingPastTripIndex];
-
-    if (isPast) {
-        trip = pastTripsData[viewingPastTripIndex];
-        summary = trip.summary || buildSummaryData(trip);
-    } else if (currentTripIndex !== null && ongoingTripsData[currentTripIndex]) {
-        trip = ongoingTripsData[currentTripIndex];
-        summary = trip.summary || buildSummaryData(trip);
-    } else {
-        return;
-    }
-
+    const ctx = currentTripCtx();
+    if (!ctx) return;
+    const trip = ctx.trip;
+    const summary = trip.summary || buildSummaryData(trip);
     const cur = trip.currency || 'INR';
     const symbol = getCurrencySymbol(cur);
-
     let text = `🧳 TripSplit Summary — ${trip.destination}\n`;
     text += `📅 ${formatDate(trip.startDate)} → ${formatDate(trip.endDate)}\n`;
-    if (isPast) text += `🏁 Completed trip\n`;
+    if (ctx.isPast) text += `🏁 Completed trip\n`;
     text += `\n💰 Total: ${symbol}${Number(summary.totalExpense).toFixed(2)}\n`;
     text += `👥 Avg/person: ${symbol}${Number(summary.equalShare).toFixed(2)}\n\n`;
-
     text += `📊 Individual breakdown:\n`;
     (summary.perPersonBalances || summary.personTotals).forEach(p => {
         const bal = typeof p.balance !== 'undefined' ? p.balance : (p.spent - summary.equalShare);
@@ -1190,7 +1409,6 @@ function shareSummary() {
         else status = 'settled ✓';
         text += `  • ${p.name}: paid ${symbol}${Number(p.spent).toFixed(2)} → ${status}\n`;
     });
-
     if (summary.settlements.length > 0) {
         text += `\n💸 Settlements:\n`;
         summary.settlements.forEach(s => {
@@ -1199,183 +1417,51 @@ function shareSummary() {
     } else {
         text += `\n✅ Everyone is settled!\n`;
     }
-
     text += `\n— via TripSplit ✨`;
-
+    const doFallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast('Summary copied to clipboard!', 'success', 2500);
+        } catch (e) {
+            prompt("Copy this summary:", text);
+        }
+        document.body.removeChild(ta);
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-            .then(() => alert("✅ Summary copied to clipboard! You can now paste and share it."))
-            .catch(() => fallbackCopy(text));
+            .then(() => showToast('Summary copied! Share it anywhere.', 'success', 2500))
+            .catch(() => doFallback());
     } else {
-        fallbackCopy(text);
+        doFallback();
     }
 }
-
-function fallbackCopy(text) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-        document.execCommand('copy');
-        alert("✅ Summary copied to clipboard!");
-    } catch (e) {
-        prompt("Copy this summary:", text);
-    }
-    document.body.removeChild(ta);
-}
-
-/* =========================================================
-   END TRIP
-========================================================= */
 
 async function endTrip() {
-    if (currentTripIndex === null || !ongoingTripsData[currentTripIndex]) return;
-
-    const srcTrip = ongoingTripsData[currentTripIndex];
+    const ctx = currentTripCtx();
+    if (!ctx || ctx.isPast) return;
+    const srcTrip = ctx.trip;
+    if (!confirm(`End the trip to "${srcTrip.destination}"? This will move it to Past Trips and finalize settlements.`)) return;
     const completedTrip = JSON.parse(JSON.stringify(srcTrip));
     completedTrip.summary = buildSummaryData(completedTrip);
     completedTrip.isCompleted = true;
     completedTrip.completedDate = new Date().toISOString();
-
     pastTripsData.push(completedTrip);
     if (pastTripsData.length > 50) pastTripsData.shift();
-
-    ongoingTripsData.splice(currentTripIndex, 1);
-
+    ongoingTripsData.splice(ctx.refIndex, 1);
     const remoteId = srcTrip._id;
-    currentTripIndex = null;
-    currentMemberIndex = null;
-    editingTripIndex = null;
-    viewingPastTripIndex = null;
-
     persistAll();
-
     if (remoteId) {
         try { await api('POST', `/${remoteId}/complete`); } catch (e) {}
     }
-
-    showPage("menuPage");
-}
-
-/* =========================================================
-   PAST TRIPS
-========================================================= */
-
-function showPastTrips() {
-    renderPastTrips();
-    showPage("pastTripsPage");
-}
-
-function renderPastTrips() {
-    const container = document.getElementById("pastTripsList");
-
-    if (pastTripsData.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-icon">📜</div>
-                <h3>No Past Trips</h3>
-                <p>Completed trips will appear here.</p>
-            </div>
-        `;
-        return;
-    }
-
-    container.innerHTML = pastTripsData.map((trip, index) => {
-        const cur = trip.currency || 'INR';
-        const total = trip.summary ? trip.summary.totalExpense : 0;
-        return `
-            <div class="trip-card past-trip-card" onclick="if(!event.target.closest('.delete-btn')) openPastTrip(${index})">
-                <div class="trip-card-top">
-                    <div class="trip-destination">${escapeHTML(trip.destination)}</div>
-                    <div class="past-badge">COMPLETED</div>
-                </div>
-                <div class="trip-dates">
-                    ${formatDate(trip.startDate)} → ${formatDate(trip.endDate)} &nbsp; • &nbsp;
-                    ${trip.members.length} members &nbsp; • &nbsp;
-                    Total: ${formatMoney(total, cur)}
-                </div>
-                <div class="trip-card-members">
-                    ${trip.members.map(member => `
-                        <div class="small-member">${escapeHTML(member.name)}</div>
-                    `).join("")}
-                </div>
-                <div style="margin-top:15px;color:#94a3b8;font-size:13px;">👆 Click to view expense calculations</div>
-                <div class="trip-card-actions">
-                    <button class="delete-btn" onclick="event.stopPropagation(); deletePastTrip(${index})">
-                        🗑️ Delete
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join("");
-}
-
-/* =========================================================
-   DELETE PAST TRIP
-========================================================= */
-
-async function deletePastTrip(index) {
-    const trip = pastTripsData[index];
-    if (!trip) return;
-
-    if (!confirm(`Delete past trip to "${trip.destination}"? This cannot be undone.`)) return;
-
-    const id = trip._id;
-    pastTripsData.splice(index, 1);
-    persistAll();
-
-    if (viewingPastTripIndex === index) viewingPastTripIndex = null;
-    else if (viewingPastTripIndex !== null && viewingPastTripIndex > index) viewingPastTripIndex--;
-
-    renderPastTrips();
-
-    if (id) {
-        try { await api('DELETE', `/${id}`); } catch (e) {}
-    }
-}
-
-/* =========================================================
-   OPEN PAST TRIP
-========================================================= */
-
-function openPastTrip(index) {
-    if (!pastTripsData[index]) return;
-
-    viewingPastTripIndex = index;
-    const trip = pastTripsData[index];
-
-    if (!trip.summary) trip.summary = buildSummaryData(trip);
-
-    renderSummary(trip, trip.summary);
-
-    document.getElementById("endTripSection").style.display = "none";
-    document.getElementById("summaryBackButton").style.display = "inline-block";
-    document.getElementById("shareSummaryBtn").style.display = "inline-block";
-
-    showPage("tripSummaryPage");
-}
-
-/* =========================================================
-   BACK FROM SUMMARY
-========================================================= */
-
-function backFromSummary() {
-    if (viewingPastTripIndex !== null) {
-        viewingPastTripIndex = null;
-        renderPastTrips();
-        showPage("pastTripsPage");
-        return;
-    }
-
-    if (currentTripIndex !== null) {
-        renderMemberSelection();
-        showPage("memberSelectionPage");
-    } else {
-        showPage("menuPage");
-    }
+    showToast('Trip completed successfully!', 'success', 2500);
+    triggerConfetti(100);
+    setTimeout(() => navigate('/past.html'), 1100);
 }
 
 /* =========================================================
@@ -1385,37 +1471,7 @@ function backFromSummary() {
 function formatDate(dateString) {
     if (!dateString) return "";
     const date = new Date(dateString + "T00:00:00");
-    return date.toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric"
-    });
-}
-
-/* =========================================================
-   ERROR / SUCCESS
-========================================================= */
-
-function showError(elementId, message) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    element.textContent = message;
-    element.style.display = "block";
-}
-
-function showSuccess(elementId, message) {
-    const element = document.getElementById(elementId);
-    if (!element) return;
-    element.textContent = message;
-    element.style.display = "block";
-}
-
-function hideMessage(elementId) {
-    const element = document.getElementById(elementId);
-    if (element) {
-        element.style.display = "none";
-        element.textContent = "";
-    }
+    return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 /* =========================================================
@@ -1432,22 +1488,65 @@ function escapeHTML(value) {
 }
 
 /* =========================================================
-   INIT
+   PAGE INIT ROUTER — called on DOMContentLoaded based on
+   body[data-page] attribute (set on each HTML file).
 ========================================================= */
 
-document.addEventListener('DOMContentLoaded', async () => {
+function detectPageId() {
+    const body = document.body;
+    if (!body) return null;
+    return body.getAttribute('data-page');
+}
+
+async function initPage() {
     await fullLoad();
     api('GET', '/health').then((r) => {
         if (r && r.status === 'ok') {
             BACKEND_ONLINE = true;
-            console.log('%c✅ TripSplit backend connected via MongoDB',
-                'color:#22c55e;font-weight:bold;');
-            console.log(`   Ongoing trips: ${r.stats.ongoingTrips}, Past trips: ${r.stats.pastTrips}`);
+            // Re-render nav to remove offline banner after it becomes available
+            const pageId = detectPageId();
+            const meta = PAGES[pageId];
+            if (meta && meta.navActive !== null) renderNav(meta.navActive);
+        } else {
+            BACKEND_ONLINE = false;
         }
     }).catch(() => {
         BACKEND_ONLINE = false;
-        console.log('%cℹ️  TripSplit running in offline/localStorage mode.',
-            'color:#eab308;font-weight:bold;');
-        console.log('   Start the Express server with `npm start` to enable cloud sync.');
     });
-});
+
+    const pageId = detectPageId();
+    if (!pageId) return;
+
+    switch (pageId) {
+        case 'home':        pageHomeInit(); break;
+        case 'newTrip':     pageNewTripInit(); break;
+        case 'memberNames': pageMemberNamesInit(); break;
+        case 'dashboard':   pageDashboardInit(); break;
+        case 'ongoing':     pageOngoingInit(); break;
+        case 'past':        pagePastInit(); break;
+        case 'tripMembers': pageTripMembersInit(); break;
+        case 'expense':     pageExpenseInit(); break;
+        case 'summary':     pageSummaryInit(); break;
+        case 'notFound':
+        case 'landing':
+            // landing page uses its own simpler hero nav chrome injection
+            if (pageId === 'notFound') {
+                injectSharedChrome('notFound', [{ label: 'Home', href: 'home.html' }, { label: '404', current: true }]);
+            }
+            break;
+    }
+
+    // Page enter animation trigger: add page-wrap-enter after microtask
+    const wrap = document.getElementById('page-wrap');
+    if (wrap) requestAnimationFrame(() => wrap.classList.add('page-wrap-enter'));
+}
+
+/* =========================================================
+   DOM READY
+========================================================= */
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPage);
+} else {
+    initPage();
+}

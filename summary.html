@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Trip Summary</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="summary" data-nav-active="ongoing">
+    <header id="global-header"></header>
+    <main id="page-wrap" class="page-wrap">
+        <div id="breadcrumb-slot"></div>
+        <div class="container">
+            <div class="card">
+                <a id="summaryBackButton" class="back-btn" style="text-decoration:none;display:none;" href="home.html">← Back</a>
+
+                <h1 class="page-title">Trip Summary</h1>
+                <p id="summaryDestination" class="page-subtitle"></p>
+
+                <div id="summaryTotal" class="summary-total"></div>
+                <div id="summaryShare" class="share-box"></div>
+
+                <div class="summary-actions">
+                    <button id="shareSummaryBtn" class="secondary-btn" style="display:none;" type="button" onclick="shareSummary()">
+                        📋 Copy & Share Summary
+                    </button>
+                </div>
+
+                <h3 style="margin-bottom:15px;">Individual Spending</h3>
+                <div id="personSummary" class="summary-list"></div>
+
+                <div class="settlement-section">
+                    <h3>Who Pays Whom</h3>
+                    <div id="settlementList"></div>
+                </div>
+
+                <div id="endTripSection" class="end-trip-section">
+                    <button id="endTripBtn" class="end-trip-btn" type="button">🏁 End Trip</button>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>

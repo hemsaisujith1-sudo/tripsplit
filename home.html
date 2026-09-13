@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Home</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="home" data-nav-active="home">
+    <header id="global-header"></header>
+    <main id="page-wrap" class="page-wrap">
+        <div id="breadcrumb-slot"></div>
+        <div class="container">
+            <div class="card">
+                <h1 class="page-title">TripSplit</h1>
+                <p class="page-subtitle">Manage your trips and expenses.</p>
+
+                <div class="menu-grid">
+                    <a class="menu-option" href="new-trip.html" tabindex="0">
+                        <div class="menu-option-header">
+                            <div class="menu-icon">✈️</div>
+                        </div>
+                        <h3>New Trip</h3>
+                        <p>Start a new trip with your friends.</p>
+                        <span class="primary-btn" style="display:inline-block;pointer-events:none;">Create Trip</span>
+                    </a>
+
+                    <a class="menu-option" href="ongoing.html" tabindex="0">
+                        <div class="menu-option-header">
+                            <div class="menu-icon">🧳</div>
+                            <span class="count-badge" id="count-ongoing">0</span>
+                        </div>
+                        <h3>Ongoing Trips</h3>
+                        <p>Continue managing your current trips.</p>
+                        <span class="primary-btn" style="display:inline-block;pointer-events:none;">View Trips</span>
+                    </a>
+
+                    <a class="menu-option" href="past.html" tabindex="0">
+                        <div class="menu-option-header">
+                            <div class="menu-icon">📜</div>
+                            <span class="count-badge" id="count-past">0</span>
+                        </div>
+                        <h3>Past Trips</h3>
+                        <p>View your completed trips.</p>
+                        <span class="primary-btn" style="display:inline-block;pointer-events:none;">Past Trips</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>

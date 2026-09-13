@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Trip Members</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="tripMembers" data-nav-active="ongoing">
+    <header id="global-header"></header>
+    <main id="page-wrap" class="page-wrap">
+        <div id="breadcrumb-slot"></div>
+        <div class="container">
+            <div class="card">
+                <h1 id="memberSelectionTitle" class="page-title">Trip — Members</h1>
+                <p class="page-subtitle">Select a member to add their expenses.</p>
+
+                <div id="memberSelectionGrid" class="members-selection"></div>
+
+                <div class="complete-trip-section">
+                    <p>Finished adding everyone's expenses?</p>
+                    <button class="complete-trip-btn" id="completeTripBtn" type="button">
+                        🏁 Complete Trip & Calculate Split
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>

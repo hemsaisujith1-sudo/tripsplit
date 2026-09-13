@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Trip Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="dashboard" data-nav-active="ongoing">
+    <header id="global-header"></header>
+    <main id="page-wrap" class="page-wrap">
+        <div id="breadcrumb-slot"></div>
+        <div class="container">
+            <div class="card dashboard">
+                <a class="back-btn dashboard-back" id="editTripLink" href="home.html">← Back & Edit Trip</a>
+
+                <div class="success-icon">✓</div>
+                <h1 class="page-title">Trip Started!</h1>
+                <p class="page-subtitle">Your trip is ready.</p>
+
+                <div id="dashboardTripInfo" class="trip-info"></div>
+                <div id="dashboardMembers" class="member-chips"></div>
+
+                <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:10px;">
+                    <button class="primary-btn" type="button" id="manageExpensesBtn">🧾 Add Expenses</button>
+                    <a class="secondary-btn" style="text-decoration:none;text-align:center;display:inline-flex;align-items:center;justify-content:center;" href="home.html">🏠 Home</a>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>

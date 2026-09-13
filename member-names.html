@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Trip Members</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-page="memberNames" data-nav-active="home">
+    <header id="global-header"></header>
+    <main id="page-wrap" class="page-wrap">
+        <div id="breadcrumb-slot"></div>
+        <div class="container">
+            <div class="card">
+                <h1 class="page-title">Add Trip Members</h1>
+                <p class="page-subtitle">Enter the names of everyone joining the trip.</p>
+
+                <div id="memberError" class="message error-message"></div>
+
+                <div id="memberInputs" class="member-input-list"></div>
+
+                <div class="info-box">
+                    💡 <strong>Important:</strong> You must enter every member's name before the trip can be started.
+                </div>
+
+                <button class="primary-btn" style="width:100%;" type="button" onclick="startTrip()">🚀 Start Trip</button>
+            </div>
+        </div>
+    </main>
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -52,7 +52,9 @@ app.use(cors({
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use(async (req, res, next) => {
+app.use(express.static(__dirname));
+
+app.use('/api', async (req, res, next) => {
   try {
     await ensureDB();
     next();
@@ -61,8 +63,6 @@ app.use(async (req, res, next) => {
   }
 });
 
-app.use(express.static(__dirname));
-
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -70,7 +70,7 @@ app.get('/', (req, res) => {
 app.use('/api/trips', require('./routes/trips'));
 
 app.use((req, res) => {
-  res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
+  res.status(404).sendFile(path.join(__dirname, 'not-found.html'));
 });
 
 app.use((err, req, res, next) => {
@@ -100,18 +100,21 @@ module.exports = vercelHandler;
 
 if (require.main === module) {
   (async () => {
+    console.log('\n🚀 TripSplit v2 — starting up...');
+    console.log('   Mode: Full-stack (Express + MongoDB + static frontend)');
     try {
-      console.log('\n🚀 TripSplit v2 — starting up...');
-      console.log('   Mode: Full-stack (Express + MongoDB + static frontend)');
-      await ensureDB({ exitOnError: true });
-      app.listen(PORT, () => {
-        console.log(`\n✅ Server ready → http://localhost:${PORT}`);
-        console.log(`   API base    → http://localhost:${PORT}/api/trips`);
-        console.log(`   Healthcheck → http://localhost:${PORT}/api/trips/health\n`);
-      });
+      await ensureDB({ exitOnError: false });
+      console.log('   ✅ Database connected');
     } catch (e) {
-      console.error('Failed to start server:', e);
-      process.exit(1);
+      console.warn('   ⚠️  Database unavailable — running in offline/static-only mode');
+      console.warn('      API endpoints will return 503 until MongoDB is reachable.');
+      console.warn('      Cause:', e.message);
     }
+    app.listen(PORT, () => {
+      console.log(`\n✅ Server ready → http://localhost:${PORT}`);
+      console.log(`   Static files → http://localhost:${PORT}/home.html etc.`);
+      console.log(`   API base    → http://localhost:${PORT}/api/trips (offline if DB down)`);
+      console.log(`   Healthcheck → http://localhost:${PORT}/api/trips/health\n`);
+    });
   })();
 }

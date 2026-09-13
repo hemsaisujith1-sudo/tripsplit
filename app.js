@@ -216,17 +216,30 @@ async function api(method, path, body) {
 
 async function fullLoad() {
     loadFromStorage();
+    const localOngoing = ongoingTripsData.slice();
+    const localPast = pastTripsData.slice();
 
     const [ongoing, past] = await Promise.all([
         api('GET', '/ongoing'),
         api('GET', '/past')
     ]);
 
-    if (ongoing && Array.isArray(ongoing)) ongoingTripsData = ongoing.map(enrichWithLocalIds);
-    if (past && Array.isArray(past)) pastTripsData = past.map(enrichWithLocalIds);
+    if (ongoing && Array.isArray(ongoing)) ongoingTripsData = mergeRemoteTrips(ongoing, localOngoing);
+    if (past && Array.isArray(past)) pastTripsData = mergeRemoteTrips(past, localPast);
 
     ensureLocalIds();
     saveToStorage();
+    if (BACKEND_ONLINE === true) await syncTripsToBackend();
+}
+
+function mergeRemoteTrips(remoteTrips, localTrips) {
+    const merged = remoteTrips.map(enrichWithLocalIds);
+    const knownKeys = new Set(merged.flatMap((trip) => [String(trip._id || ''), String(trip.localId || '')]));
+    localTrips.forEach((trip) => {
+        const keys = [String(trip._id || ''), String(trip.localId || '')];
+        if (!keys.some((key) => key && knownKeys.has(key))) merged.push(trip);
+    });
+    return merged;
 }
 
 function enrichWithLocalIds(t) {

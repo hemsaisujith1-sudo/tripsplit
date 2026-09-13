@@ -229,7 +229,7 @@ async function fullLoad() {
 
     ensureLocalIds();
     saveToStorage();
-    if (BACKEND_ONLINE === true) await syncTripsToBackend();
+    if (BACKEND_ONLINE === true) syncTripsToBackend().catch(() => {});
 }
 
 function mergeRemoteTrips(remoteTrips, localTrips) {

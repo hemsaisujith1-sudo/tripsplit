@@ -4,12 +4,7 @@
   "cleanUrls": true,
   "functions": {
     "api/index.js": {
-      "includeFiles": [
-        "models/**",
-        "routes/**",
-        "config/**",
-        "controllers/**"
-      ]
+      "includeFiles": "{models,routes,config,controllers}/**"
     }
   },
   "routes": [

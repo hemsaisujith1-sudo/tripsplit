@@ -49,7 +49,23 @@ app.use((err, req, res, next) => {
   });
 });
 
-module.exports = { app, ensureDB };
+const vercelHandler = async (req, res) => {
+  try {
+    await ensureDB();
+  } catch (err) {
+    return res.status(503).json({
+      error: 'Database unavailable on deployment',
+      hint: 'Set MONGODB_URI environment variable in Vercel Project Settings → Environment Variables',
+      detail: process.env.MONGODB_URI ? err.message : 'MONGODB_URI env var is missing'
+    });
+  }
+  return app(req, res);
+};
+
+vercelHandler.app = app;
+vercelHandler.ensureDB = ensureDB;
+vercelHandler.default = vercelHandler;
+module.exports = vercelHandler;
 
 if (require.main === module) {
   (async () => {

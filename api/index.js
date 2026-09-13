@@ -1,6 +1,6 @@
 const { app, ensureDB } = require('../server');
 
-module.exports = async (req, res) => {
+const handler = async (req, res) => {
   try {
     await ensureDB();
   } catch (err) {
@@ -12,3 +12,6 @@ module.exports = async (req, res) => {
   }
   return app(req, res);
 };
+
+module.exports = handler;
+module.exports.default = handler;

@@ -829,7 +829,14 @@ function pageDashboardInit() {
     const editBtn = document.getElementById('editTripLink');
     if (editBtn) editBtn.href = `new-trip.html?tripId=${ctx.trip.localId}`;
     const manageBtn = document.getElementById('manageExpensesBtn');
-    if (manageBtn) manageBtn.href = `trip-members.html?tripId=${ctx.trip.localId}`;
+    if (manageBtn) {
+        const hasMembers = Array.isArray(ctx.trip.members) && ctx.trip.members.length >= 2;
+        manageBtn.textContent = hasMembers ? '🧾 Add Expenses' : '👥 Add Members First';
+        manageBtn.onclick = () => navigate(
+            hasMembers ? '/trip-members.html' : '/new-trip.html',
+            { tripId: ctx.trip.localId }
+        );
+    }
 
     setTimeout(() => triggerConfetti(70), 150);
 }

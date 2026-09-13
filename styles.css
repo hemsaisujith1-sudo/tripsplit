@@ -1546,6 +1546,85 @@ footer {
     width: 100%;
 }
 
+.trip-expense-overview {
+    margin-top: 28px;
+    padding: 22px;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 16px;
+    background: rgba(99, 102, 241, 0.06);
+}
+
+.trip-expense-overview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.trip-expense-overview h2 {
+    margin: 0 0 4px;
+    font-size: 18px;
+}
+
+.trip-expense-overview p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.trip-expense-overview-head > strong {
+    color: #67e8f9;
+    font-size: 22px;
+}
+
+.trip-expense-ledger {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.trip-expense-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 11px 13px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.55);
+}
+
+.trip-expense-row span {
+    display: grid;
+    gap: 3px;
+}
+
+.trip-expense-row small {
+    color: #94a3b8;
+}
+
+.trip-expense-row b {
+    color: white;
+    white-space: nowrap;
+}
+
+.empty-expense-state {
+    margin: 16px 0 !important;
+}
+
+.review-summary-btn {
+    display: inline-block;
+    margin-top: 10px;
+    text-decoration: none;
+}
+
+@media (max-width: 600px) {
+    .trip-expense-overview-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
 .nav-account {
     color: #c7d2fe;
     font-size: 14px;

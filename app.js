@@ -1022,6 +1022,8 @@ function renderMemberSelection(ctx) {
         `;
     }).join("");
 
+    renderTripExpenseOverview(ctx);
+
     const completeBtn = document.getElementById("completeTripBtn");
     if (completeBtn) {
         if (ctx.isPast) {
@@ -1036,6 +1038,37 @@ function renderMemberSelection(ctx) {
             };
         }
     }
+}
+
+function renderTripExpenseOverview(ctx) {
+    const container = document.getElementById('tripExpenseOverview');
+    if (!container || !ctx) return;
+    const expenses = [];
+    ctx.trip.members.forEach((member) => {
+        (member.expenses || []).forEach((expense) => {
+            expenses.push({ payer: member.name, ...expense });
+        });
+    });
+    const total = expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0);
+    const summaryHref = `summary.html?tripId=${encodeURIComponent(ctx.trip.localId)}`;
+    container.innerHTML = `
+        <div class="trip-expense-overview-head">
+            <div>
+                <h2>Expense total</h2>
+                <p>${expenses.length} ${expenses.length === 1 ? 'expense' : 'expenses'} recorded across the trip</p>
+            </div>
+            <strong>${formatMoney(total, ctx.trip.currency)}</strong>
+        </div>
+        ${expenses.length === 0
+            ? '<p class="empty-expense-state">Choose a member above to add their first expense.</p>'
+            : `<div class="trip-expense-ledger">${expenses.map(expense => `
+                <div class="trip-expense-row">
+                    <span><strong>${escapeHTML(expense.payer)}</strong><small>${escapeHTML(expense.description)}</small></span>
+                    <b>${formatMoney(expense.amount, ctx.trip.currency)}</b>
+                </div>
+            `).join('')}</div>`}
+        <a class="secondary-btn review-summary-btn" href="${summaryHref}">📊 Review calculation</a>
+    `;
 }
 
 /* =========================================================

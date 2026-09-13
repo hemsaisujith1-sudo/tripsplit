@@ -1,15 +1,38 @@
 {
   "version": 2,
-  "buildCommand": "echo 'No build step required'",
-  "installCommand": "npm install --production=false",
-  "outputDirectory": ".",
-  "functions": {
-    "server.js": {
-      "includeFiles": "**/*.{html,css,js,json,env}"
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "index.html",
+          "styles.css",
+          "app.js",
+          "package.json",
+          "models/**",
+          "routes/**",
+          "config/**",
+          "controllers/**"
+        ]
+      }
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "styles.css",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "app.js",
+      "use": "@vercel/static"
     }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/server.js" },
-    { "source": "/((?!_vercel|api).*)", "destination": "/index.html" }
+  ],
+  "installCommand": "npm install",
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/server.js" },
+    { "src": "/(.*)", "dest": "/server.js" }
   ]
 }

@@ -3,12 +3,20 @@
   "installCommand": "npm install",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{models,routes,config,controllers}/**"
+      "includeFiles": [
+        "*.html",
+        "styles.css",
+        "app.js",
+        "models/**",
+        "routes/**",
+        "config/**",
+        "controllers/**"
+      ]
     }
   },
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.js" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "status": 404, "dest": "/not-found.html" }
+    { "src": "/(.*)", "dest": "/api/index.js" }
   ]
 }

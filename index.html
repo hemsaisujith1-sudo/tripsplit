@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TripSplit — Split Travel Expenses Effortlessly</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- =========================================================
+     WELCOME PAGE
+========================================================= -->
+<section id="welcomePage" class="page active">
+    <div class="container">
+        <div class="card welcome-card">
+            <div class="logo">TripSplit</div>
+            <p class="tagline">
+                Travel together. Spend together.
+                Split everything effortlessly.
+            </p>
+            <button class="primary-btn" onclick="showMenu()">Let's Get Started</button>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     MENU PAGE
+========================================================= -->
+<section id="menuPage" class="page">
+    <div class="container">
+        <div class="card">
+            <h1 class="page-title">TripSplit</h1>
+            <p class="page-subtitle">Manage your trips and expenses.</p>
+
+            <div class="menu-grid">
+                <div class="menu-option" onclick="showNewTrip()">
+                    <div class="menu-icon">✈️</div>
+                    <h3>New Trip</h3>
+                    <p>Start a new trip with your friends.</p>
+                    <button class="primary-btn">Create Trip</button>
+                </div>
+
+                <div class="menu-option" onclick="showOngoingTrips()">
+                    <div class="menu-icon">🧳</div>
+                    <h3>Ongoing Trips</h3>
+                    <p>Continue managing your current trips.</p>
+                    <button class="primary-btn">View Trips</button>
+                </div>
+
+                <div class="menu-option" onclick="showPastTrips()">
+                    <div class="menu-icon">📜</div>
+                    <h3>Past Trips</h3>
+                    <p>View your completed trips.</p>
+                    <button class="primary-btn">Past Trips</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     NEW TRIP PAGE
+========================================================= -->
+<section id="newTripPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="backToMenu()">← Back</button>
+
+            <h1 class="page-title">Create New Trip</h1>
+            <p class="page-subtitle">Enter your trip details.</p>
+
+            <div id="newTripError" class="message error-message"></div>
+
+            <div class="form-group">
+                <label>Destination</label>
+                <input id="destination" type="text" placeholder="e.g. Goa">
+            </div>
+
+            <div class="form-group">
+                <label>Currency</label>
+                <select id="currencySelect"></select>
+            </div>
+
+            <div class="form-group">
+                <label>Trip Start Date</label>
+                <input id="startDate" class="date-input" type="date" onclick="openDatePicker('startDate')">
+            </div>
+
+            <div class="form-group">
+                <label>Trip End Date</label>
+                <input id="endDate" class="date-input" type="date" onclick="openDatePicker('endDate')">
+            </div>
+
+            <div class="form-group">
+                <label>Number of Members</label>
+                <div class="member-stepper">
+                    <button class="stepper-btn" onclick="changeMembers(-1)">−</button>
+                    <div id="memberCount" class="member-number">4</div>
+                    <button class="stepper-btn" onclick="changeMembers(1)">+</button>
+                </div>
+            </div>
+
+            <button class="primary-btn" style="width:100%;" onclick="createTrip()">Continue →</button>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     MEMBER NAMES PAGE
+========================================================= -->
+<section id="memberNamesPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="backToNewTrip()">← Back</button>
+
+            <h1 class="page-title">Add Trip Members</h1>
+            <p class="page-subtitle">Enter the names of everyone joining the trip.</p>
+
+            <div id="memberError" class="message error-message"></div>
+
+            <div id="memberInputs" class="member-input-list"></div>
+
+            <div class="info-box">
+                💡 <strong>Important:</strong> You must enter every member's name before the trip can be started.
+            </div>
+
+            <button class="primary-btn" style="width:100%;" onclick="startTrip()">🚀 Start Trip</button>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     DASHBOARD PAGE
+========================================================= -->
+<section id="dashboardPage" class="page">
+    <div class="container">
+        <div class="card dashboard">
+            <button class="back-btn dashboard-back" onclick="editCurrentTrip()">← Back & Edit Trip</button>
+
+            <div class="success-icon">✓</div>
+            <h1 class="page-title">Trip Started!</h1>
+            <p class="page-subtitle">Your trip is ready.</p>
+
+            <div id="dashboardTripInfo" class="trip-info"></div>
+            <div id="dashboardMembers" class="member-chips"></div>
+
+            <button class="primary-btn" onclick="goHome()">🏠 Home</button>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     ONGOING TRIPS PAGE
+========================================================= -->
+<section id="ongoingTripsPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="goHome()">← Back</button>
+
+            <h1 class="page-title">Ongoing Trips</h1>
+            <p class="page-subtitle">Select a trip to manage expenses.</p>
+
+            <div id="ongoingTripsList" class="trip-list"></div>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     MEMBER SELECTION PAGE
+========================================================= -->
+<section id="memberSelectionPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="backToOngoingTrips()">← Back</button>
+
+            <h1 id="memberSelectionTitle" class="page-title">Trip — Members</h1>
+            <p class="page-subtitle">Select a member to add their expenses.</p>
+
+            <div id="memberSelectionGrid" class="members-selection"></div>
+
+            <div class="complete-trip-section">
+                <p>Finished adding everyone's expenses?</p>
+                <button class="complete-trip-btn" onclick="completeTrip()">
+                    🏁 Complete Trip & Calculate Split
+                </button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     EXPENSE PAGE
+========================================================= -->
+<section id="expensePage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="backToMembers()">← Back</button>
+
+            <h1 class="page-title">Add Expense</h1>
+            <p class="page-subtitle">Record money spent by this member.</p>
+
+            <div id="expenseSuccess" class="message success-message"></div>
+            <div id="expenseError" class="message error-message"></div>
+
+            <div id="selectedMemberBox" class="selected-member"></div>
+
+            <div class="form-group">
+                <label>How much did they spend?</label>
+                <input id="expenseAmount" type="number" min="0" step="0.01" placeholder="0.00">
+            </div>
+
+            <div class="form-group">
+                <label>What did they spend it on?</label>
+                <input id="expenseDescription" type="text" placeholder="e.g. Hotel, Food, Transport">
+            </div>
+
+            <div id="splitSectionContainer"></div>
+
+            <button id="expenseSubmitBtn" class="primary-btn" style="width:100%;" onclick="addExpense()">
+                ➕ Add Expense
+            </button>
+
+            <div class="expense-list">
+                <h3 style="margin-bottom:15px;">Expenses Added</h3>
+                <div id="memberExpenseList"></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     TRIP SUMMARY PAGE
+========================================================= -->
+<section id="tripSummaryPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button id="summaryBackButton" class="back-btn" onclick="backFromSummary()">← Back</button>
+
+            <h1 class="page-title">Trip Summary</h1>
+            <p id="summaryDestination" class="page-subtitle"></p>
+
+            <div id="summaryTotal" class="summary-total"></div>
+            <div id="summaryShare" class="share-box"></div>
+
+            <div class="summary-actions">
+                <button id="shareSummaryBtn" class="secondary-btn" onclick="shareSummary()">
+                    📋 Copy & Share Summary
+                </button>
+            </div>
+
+            <h3 style="margin-bottom:15px;">Individual Spending</h3>
+            <div id="personSummary" class="summary-list"></div>
+
+            <div class="settlement-section">
+                <h3>Who Pays Whom</h3>
+                <div id="settlementList"></div>
+            </div>
+
+            <div id="endTripSection" class="end-trip-section">
+                <button class="end-trip-btn" onclick="endTrip()">🏁 End Trip</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- =========================================================
+     PAST TRIPS PAGE
+========================================================= -->
+<section id="pastTripsPage" class="page">
+    <div class="container">
+        <div class="card">
+            <button class="back-btn" onclick="goHome()">← Back</button>
+
+            <h1 class="page-title">Past Trips</h1>
+            <p class="page-subtitle">Your completed trips.</p>
+
+            <div id="pastTripsList" class="trip-list"></div>
+        </div>
+    </div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
